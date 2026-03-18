@@ -1,0 +1,6 @@
+watchdog
+pdf2image
+Pillow
+pywin32
+customtkinter
+pyinstaller
