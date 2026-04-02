@@ -2,8 +2,9 @@ import logging
 import os
 import shutil
 import tempfile
+import zipfile
 
-from pdf2image import convert_from_path
+from PIL import Image
 
 import config
 
@@ -11,17 +12,21 @@ logger = logging.getLogger(__name__)
 
 
 def process_file(file_path: str):
-    """PDF 파일 처리 → 출력 모드에 따라 분기 → done/error 이동."""
+    """파일 처리 → 출력 모드에 따라 분기 → done/error 이동."""
     os.makedirs(config.DONE_DIR, exist_ok=True)
     os.makedirs(config.ERROR_DIR, exist_ok=True)
 
     filename = os.path.basename(file_path)
 
     try:
+        images = _load_images(file_path)
+        if not images:
+            raise RuntimeError(f"출력할 이미지가 없습니다: {filename}")
+
         if config.PRINTER_MODE == "gtx4cmd":
-            _process_via_gtx4cmd(file_path)
+            _print_via_gtx4cmd(images)
         else:
-            _process_via_direct(file_path)
+            _print_via_direct(images)
 
         dest = _unique_path(os.path.join(config.DONE_DIR, filename))
         shutil.move(file_path, dest)
@@ -36,30 +41,70 @@ def process_file(file_path: str):
             logger.exception("에러 폴더 이동 실패: %s", filename)
 
 
-def _process_via_direct(file_path: str):
-    """win32print 직접 출력."""
-    from printer import print_image
+def _load_images(file_path: str) -> list[Image.Image]:
+    """파일 타입에 따라 PIL Image 리스트로 변환.
 
-    images = convert_from_path(
+    - PDF: pdf2image로 변환
+    - PNG/JPG: 직접 로드
+    - ZIP: 내부 이미지 파일 추출
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == ".pdf":
+        return _load_from_pdf(file_path)
+    elif ext == ".png" or ext == ".jpg" or ext == ".jpeg":
+        return [Image.open(file_path).copy()]
+    elif ext == ".zip":
+        return _load_from_zip(file_path)
+    else:
+        raise RuntimeError(f"지원하지 않는 파일 형식: {ext}")
+
+
+def _load_from_pdf(file_path: str) -> list[Image.Image]:
+    """PDF → PIL Image 리스트."""
+    from pdf2image import convert_from_path
+
+    return convert_from_path(
         file_path,
         dpi=config.RENDER_DPI,
         poppler_path=config.POPPLER_PATH,
     )
+
+
+def _load_from_zip(file_path: str) -> list[Image.Image]:
+    """ZIP 내부의 이미지 파일(PNG/JPG)을 추출하여 PIL Image 리스트로 반환."""
+    images = []
+    tmp_dir = tempfile.mkdtemp(prefix="zip_")
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            zf.extractall(tmp_dir)
+
+        image_exts = {".png", ".jpg", ".jpeg"}
+        for root, _, files in os.walk(tmp_dir):
+            for name in sorted(files):
+                if os.path.splitext(name)[1].lower() in image_exts:
+                    img_path = os.path.join(root, name)
+                    images.append(Image.open(img_path).copy())
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return images
+
+
+def _print_via_direct(images: list[Image.Image]):
+    """win32print 직접 출력."""
+    from printer import print_image
+
     for i, img in enumerate(images, 1):
         logger.info("  페이지 %d/%d 출력 중...", i, len(images))
         print_image(img)
 
 
-def _process_via_gtx4cmd(file_path: str):
-    """GTX4CMD.exe 경유 출력."""
+def _print_via_gtx4cmd(images: list[Image.Image]):
+    """GTX4CMD.exe 경유 출력 (PNG만 지원)."""
     from gtx4cmd import create_arx4, send_to_printer
     from xml_builder import build_xml
 
-    images = convert_from_path(
-        file_path,
-        dpi=config.RENDER_DPI,
-        poppler_path=config.POPPLER_PATH,
-    )
     tmp_dir = tempfile.mkdtemp(prefix="gtx4_")
     try:
         xml_path = os.path.join(tmp_dir, "settings.xml")
@@ -68,7 +113,12 @@ def _process_via_gtx4cmd(file_path: str):
         for i, img in enumerate(images):
             png_path = os.path.join(tmp_dir, f"page_{i}.png")
             arx4_path = os.path.join(tmp_dir, f"page_{i}.arx4")
-            img.save(png_path, "PNG")
+
+            # PNG로 변환 저장 (GTX4CMD.exe는 PNG만 지원)
+            if img.mode == "RGBA":
+                img.save(png_path, "PNG")
+            else:
+                img.convert("RGB").save(png_path, "PNG")
 
             logger.info("  페이지 %d/%d ARX4 생성 중...", i + 1, len(images))
             rc = create_arx4(xml_path, png_path, arx4_path)
