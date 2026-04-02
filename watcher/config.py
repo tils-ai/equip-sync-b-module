@@ -47,6 +47,20 @@ dpi = 300
 [poppler]
 ; poppler 바이너리 경로 (비워두면 시스템 PATH 또는 번들)
 path =
+
+[api]
+; dps-store 테넌트명 (인증 시 자동 설정)
+tenant =
+; API 키 (Device Auth로 발급, 자동 설정)
+api_key =
+; dps-store 서버 URL
+base_url = https://store.dpl.shop
+; 풀링 간격 (초)
+poll_interval = 5
+
+[download]
+; PDF 다운로드 폴더 (비워두면 ./download)
+dir =
 """
 
 # config.ini가 없으면 기본값으로 생성
@@ -106,12 +120,21 @@ def _resolve_poppler():
 
 POPPLER_PATH = _resolve_poppler()
 
+# --- api ---
+API_TENANT = _ini.get("api", "tenant", fallback="")
+API_KEY = _ini.get("api", "api_key", fallback="")
+API_BASE_URL = _ini.get("api", "base_url", fallback="https://store.dpl.shop")
+API_POLL_INTERVAL = _ini.getint("api", "poll_interval", fallback=5)
+
+# --- download ---
+DOWNLOAD_DIR = _ini.get("download", "dir", fallback="") or os.path.join(BASE_DIR, "download")
+
 # 파일 안정성 확인 파라미터
 FILE_STABLE_CHECK_INTERVAL = 1.0
 FILE_STABLE_CHECK_COUNT = 2
 
 # 폴더 자동 생성
-for _d in (WATCH_DIR, DONE_DIR, ERROR_DIR):
+for _d in (WATCH_DIR, DONE_DIR, ERROR_DIR, DOWNLOAD_DIR):
     os.makedirs(_d, exist_ok=True)
 
 
@@ -127,6 +150,7 @@ def reload():
     global PRINTER_NAME, PRINTER_MODE, PLATEN_SIZE, INK, COPIES
     global POSITION, WHITE_AS, GTX4CMD_EXE
     global WATCH_DIR, DONE_DIR, ERROR_DIR, RENDER_DPI, POPPLER_PATH
+    global API_TENANT, API_KEY, API_BASE_URL, API_POLL_INTERVAL, DOWNLOAD_DIR
 
     _ini.read(INI_PATH, encoding="utf-8")
 
@@ -144,5 +168,11 @@ def reload():
     RENDER_DPI = _ini.getint("render", "dpi", fallback=300)
     POPPLER_PATH = _resolve_poppler()
 
-    for _d in (WATCH_DIR, DONE_DIR, ERROR_DIR):
+    API_TENANT = _ini.get("api", "tenant", fallback="")
+    API_KEY = _ini.get("api", "api_key", fallback="")
+    API_BASE_URL = _ini.get("api", "base_url", fallback="https://store.dpl.shop")
+    API_POLL_INTERVAL = _ini.getint("api", "poll_interval", fallback=5)
+    DOWNLOAD_DIR = _ini.get("download", "dir", fallback="") or os.path.join(BASE_DIR, "download")
+
+    for _d in (WATCH_DIR, DONE_DIR, ERROR_DIR, DOWNLOAD_DIR):
         os.makedirs(_d, exist_ok=True)

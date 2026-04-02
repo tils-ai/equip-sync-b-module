@@ -45,9 +45,9 @@ class WatcherApp(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title("Brother GTX-4 Watcher")
-        self.geometry("680x580")
-        self.minsize(560, 440)
+        self.title("Brother GTX-4 Manager")
+        self.geometry("720x620")
+        self.minsize(600, 480)
         self.configure(fg_color=_BG)
 
         ctk.set_appearance_mode("dark")
@@ -55,14 +55,12 @@ class WatcherApp(ctk.CTk):
         self._log_queue = queue.Queue()
         self._observer = None
         self._running = False
+        self._agent = None
 
         self._setup_logging()
         self._build_ui()
         self._poll_log_queue()
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
-
-        # 자동 시작
-        self.after(200, self._start)
 
     # ─── 로깅 ───
 
@@ -81,11 +79,25 @@ class WatcherApp(ctk.CTk):
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        # 탭 뷰
+        self._tabview = ctk.CTkTabview(self, fg_color=_BG, segmented_button_fg_color=_FRAME_BG)
+        self._tabview.grid(row=0, column=0, padx=8, pady=8, sticky="nsew")
+
+        self._tab_watcher = self._tabview.add("Watcher")
+        self._tab_agent = self._tabview.add("Agent")
+
+        self._build_watcher_tab(self._tab_watcher)
+        self._build_agent_tab(self._tab_agent)
+
+    def _build_watcher_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(3, weight=1)
 
         # --- 상태 바 ---
-        status_frame = ctk.CTkFrame(self, fg_color=_FRAME_BG, corner_radius=8)
-        status_frame.grid(row=0, column=0, padx=12, pady=(12, 6), sticky="ew")
+        status_frame = ctk.CTkFrame(parent, fg_color=_FRAME_BG, corner_radius=8)
+        status_frame.grid(row=0, column=0, padx=8, pady=(8, 4), sticky="ew")
         status_frame.grid_columnconfigure(1, weight=1)
 
         self._status_dot = ctk.CTkLabel(
@@ -100,8 +112,8 @@ class WatcherApp(ctk.CTk):
         self._status_label.grid(row=0, column=1, sticky="w")
 
         # --- 설정 정보 ---
-        info_frame = ctk.CTkFrame(self, fg_color=_FRAME_BG, corner_radius=8)
-        info_frame.grid(row=1, column=0, padx=12, pady=6, sticky="ew")
+        info_frame = ctk.CTkFrame(parent, fg_color=_FRAME_BG, corner_radius=8)
+        info_frame.grid(row=1, column=0, padx=8, pady=4, sticky="ew")
         info_frame.grid_columnconfigure(1, weight=1)
 
         mode_display = "win32print 직접" if config.PRINTER_MODE == "direct" else "GTX4CMD.exe 경유"
@@ -109,12 +121,8 @@ class WatcherApp(ctk.CTk):
             ("프린터", config.PRINTER_NAME),
             ("출력 모드", mode_display),
             ("감시 폴더", config.WATCH_DIR),
-            ("완료 폴더", config.DONE_DIR),
             ("렌더 DPI", str(config.RENDER_DPI)),
         ]
-        if config.PRINTER_MODE == "gtx4cmd":
-            gtx4_path = config.GTX4CMD_EXE or "(미설정)"
-            settings.append(("GTX4CMD 경로", gtx4_path))
 
         for i, (label, value) in enumerate(settings):
             ctk.CTkLabel(
@@ -127,8 +135,8 @@ class WatcherApp(ctk.CTk):
             ).grid(row=i, column=1, padx=(0, 12), pady=2, sticky="w")
 
         # --- 설정 버튼 ---
-        settings_btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        settings_btn_frame.grid(row=2, column=0, padx=12, pady=(0, 6), sticky="ew")
+        settings_btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        settings_btn_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
 
         self._settings_btn = ctk.CTkButton(
             settings_btn_frame, text="⚙ 설정", command=self._open_settings,
@@ -138,23 +146,17 @@ class WatcherApp(ctk.CTk):
         self._settings_btn.pack(side="right")
 
         # --- 로그 ---
-        log_label = ctk.CTkLabel(
-            self, text="로그", font=(_FONT, 12),
-            text_color=_TEXT_MUTED, anchor="w",
-        )
-        log_label.grid(row=3, column=0, padx=14, pady=(6, 0), sticky="nw")
-
         self._log_text = ctk.CTkTextbox(
-            self, state="disabled",
+            parent, state="disabled",
             font=(_FONT, 11),
             fg_color=_LOG_BG, text_color=_LOG_TEXT,
             corner_radius=8,
         )
-        self._log_text.grid(row=3, column=0, padx=12, pady=(24, 6), sticky="nsew")
+        self._log_text.grid(row=3, column=0, padx=8, pady=4, sticky="nsew")
 
         # --- 시작/정지 버튼 ---
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.grid(row=4, column=0, padx=12, pady=(6, 12), sticky="ew")
+        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_frame.grid(row=4, column=0, padx=8, pady=(4, 8), sticky="ew")
         btn_frame.grid_columnconfigure((0, 1), weight=1)
 
         self._start_btn = ctk.CTkButton(
@@ -170,6 +172,85 @@ class WatcherApp(ctk.CTk):
             hover_color="#6B6360", corner_radius=8, state="disabled",
         )
         self._stop_btn.grid(row=0, column=1, padx=(4, 0), sticky="ew")
+
+    def _build_agent_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(2, weight=1)
+
+        # --- 연결 상태 ---
+        status_frame = ctk.CTkFrame(parent, fg_color=_FRAME_BG, corner_radius=8)
+        status_frame.grid(row=0, column=0, padx=8, pady=(8, 4), sticky="ew")
+        status_frame.grid_columnconfigure(1, weight=1)
+
+        self._agent_dot = ctk.CTkLabel(
+            status_frame, text="●", font=(_FONT, 16), text_color=_GRAY,
+        )
+        self._agent_dot.grid(row=0, column=0, padx=(12, 4), pady=8)
+
+        self._agent_status_label = ctk.CTkLabel(
+            status_frame, text="중지됨",
+            font=(_FONT, 14, "bold"), text_color=_TEXT,
+        )
+        self._agent_status_label.grid(row=0, column=1, sticky="w")
+
+        # --- 설정 정보 ---
+        info_frame = ctk.CTkFrame(parent, fg_color=_FRAME_BG, corner_radius=8)
+        info_frame.grid(row=1, column=0, padx=8, pady=4, sticky="ew")
+        info_frame.grid_columnconfigure(1, weight=1)
+
+        api_key_display = (config.API_KEY[:12] + "...") if config.API_KEY else "(미설정)"
+        agent_settings = [
+            ("테넌트", config.API_TENANT or "(미설정)"),
+            ("서버", config.API_BASE_URL),
+            ("API 키", api_key_display),
+            ("풀링 간격", f"{config.API_POLL_INTERVAL}초"),
+            ("다운로드", config.DOWNLOAD_DIR),
+        ]
+
+        for i, (label, value) in enumerate(agent_settings):
+            ctk.CTkLabel(
+                info_frame, text=label,
+                font=(_FONT, 12), text_color=_TEXT_MUTED,
+            ).grid(row=i, column=0, padx=(12, 8), pady=2, sticky="w")
+            ctk.CTkLabel(
+                info_frame, text=str(value), anchor="w",
+                font=(_FONT, 12), text_color=_TEXT,
+            ).grid(row=i, column=1, padx=(0, 12), pady=2, sticky="w")
+
+        # --- 로그 (공유) ---
+        self._agent_log = ctk.CTkTextbox(
+            parent, state="disabled",
+            font=(_FONT, 11),
+            fg_color=_LOG_BG, text_color=_LOG_TEXT,
+            corner_radius=8,
+        )
+        self._agent_log.grid(row=2, column=0, padx=8, pady=4, sticky="nsew")
+
+        # --- 버튼 ---
+        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, padx=8, pady=(4, 8), sticky="ew")
+        btn_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        self._auth_btn = ctk.CTkButton(
+            btn_frame, text="인증", command=self._authenticate,
+            font=(_FONT, 13), fg_color=_GRAY,
+            hover_color="#6B6360", corner_radius=8,
+        )
+        self._auth_btn.grid(row=0, column=0, padx=(0, 4), sticky="ew")
+
+        self._agent_start_btn = ctk.CTkButton(
+            btn_frame, text="시작", command=self._start_agent,
+            font=(_FONT, 13), fg_color=_BLUE,
+            hover_color="#6B8EA8", corner_radius=8,
+        )
+        self._agent_start_btn.grid(row=0, column=1, padx=4, sticky="ew")
+
+        self._agent_stop_btn = ctk.CTkButton(
+            btn_frame, text="중지", command=self._stop_agent,
+            font=(_FONT, 13), fg_color=_GRAY,
+            hover_color="#6B6360", corner_radius=8, state="disabled",
+        )
+        self._agent_stop_btn.grid(row=0, column=2, padx=(4, 0), sticky="ew")
 
     # ─── 상태 ───
 
@@ -217,26 +298,78 @@ class WatcherApp(ctk.CTk):
         while not self._log_queue.empty():
             try:
                 msg = self._log_queue.get_nowait()
-                self._log_text.configure(state="normal")
-                self._log_text.insert("end", msg + "\n")
-                self._log_text.configure(state="disabled")
+                for textbox in (self._log_text, self._agent_log):
+                    textbox.configure(state="normal")
+                    textbox.insert("end", msg + "\n")
+                    textbox.configure(state="disabled")
                 has_new = True
             except queue.Empty:
                 break
 
         if has_new:
             self._log_text.see("end")
-            self._trim_log()
+            self._agent_log.see("end")
+            self._trim_log(self._log_text)
+            self._trim_log(self._agent_log)
 
         self.after(100, self._poll_log_queue)
 
-    def _trim_log(self):
-        content = self._log_text.get("1.0", "end")
+    def _trim_log(self, textbox):
+        content = textbox.get("1.0", "end")
         lines = content.split("\n")
         if len(lines) > self.MAX_LOG_LINES:
-            self._log_text.configure(state="normal")
-            self._log_text.delete("1.0", f"{len(lines) - self.MAX_LOG_LINES}.0")
-            self._log_text.configure(state="disabled")
+            textbox.configure(state="normal")
+            textbox.delete("1.0", f"{len(lines) - self.MAX_LOG_LINES}.0")
+            textbox.configure(state="disabled")
+
+    # ─── Agent ───
+
+    def _authenticate(self):
+        import threading
+        from auth import authenticate
+
+        if not config.API_TENANT:
+            logger.error("테넌트가 설정되지 않았습니다. 설정에서 입력하세요.")
+            return
+
+        def _auth_thread():
+            try:
+                api_key = authenticate(config.API_BASE_URL, config.API_TENANT)
+                config.save_value("api", "api_key", api_key)
+                config.reload()
+                logger.info("API 키 저장 완료")
+            except Exception as e:
+                logger.error("인증 실패: %s", e)
+
+        threading.Thread(target=_auth_thread, daemon=True).start()
+
+    def _start_agent(self):
+        from agent import AgentWorker
+
+        if self._agent and self._agent.is_running:
+            return
+        self._agent = AgentWorker()
+        self._agent.start()
+        self._update_agent_status()
+
+    def _stop_agent(self):
+        if self._agent:
+            self._agent.stop()
+            self._agent = None
+        self._update_agent_status()
+
+    def _update_agent_status(self):
+        running = self._agent and self._agent.is_running
+        if running:
+            self._agent_dot.configure(text_color=_GREEN)
+            self._agent_status_label.configure(text="풀링 중")
+            self._agent_start_btn.configure(state="disabled", fg_color=_GRAY)
+            self._agent_stop_btn.configure(state="normal", fg_color=_CORAL, hover_color="#C47A6B")
+        else:
+            self._agent_dot.configure(text_color=_GRAY)
+            self._agent_status_label.configure(text="중지됨")
+            self._agent_start_btn.configure(state="normal", fg_color=_BLUE)
+            self._agent_stop_btn.configure(state="disabled", fg_color=_GRAY)
 
     # ─── 설정 다이얼로그 ───
 
@@ -247,6 +380,7 @@ class WatcherApp(ctk.CTk):
 
     def _on_closing(self):
         self._stop()
+        self._stop_agent()
         self.destroy()
 
 
@@ -256,7 +390,7 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("설정")
-        self.geometry("500x480")
+        self.geometry("500x600")
         self.configure(fg_color=_BG)
         self.transient(parent)
         self.grab_set()
@@ -316,6 +450,17 @@ class SettingsDialog(ctk.CTkToplevel):
         self._render_dpi = self._entry_row("DPI", str(config.RENDER_DPI), row)
         row += 1
 
+        # --- api ---
+        row = self._section_header("Agent (API)", row)
+        self._api_tenant = self._entry_row("테넌트", config.API_TENANT, row)
+        row += 1
+        self._api_base_url = self._entry_row("서버 URL", config.API_BASE_URL, row)
+        row += 1
+        self._api_poll_interval = self._entry_row("풀링 간격 (초)", str(config.API_POLL_INTERVAL), row)
+        row += 1
+        self._download_dir = self._entry_row("다운로드 폴더", config.DOWNLOAD_DIR, row)
+        row += 1
+
         # --- 저장 버튼 ---
         save_btn = ctk.CTkButton(
             self, text="저장", command=self._save,
@@ -373,6 +518,11 @@ class SettingsDialog(ctk.CTkToplevel):
         config.save_value("folder", "done", self._done_dir.get())
         config.save_value("folder", "error", self._error_dir.get())
         config.save_value("render", "dpi", self._render_dpi.get())
+
+        config.save_value("api", "tenant", self._api_tenant.get())
+        config.save_value("api", "base_url", self._api_base_url.get())
+        config.save_value("api", "poll_interval", self._api_poll_interval.get())
+        config.save_value("download", "dir", self._download_dir.get())
 
         config.reload()
         logger.info("설정 저장 완료 (재시작 시 적용)")
