@@ -14,7 +14,7 @@ def authenticate(base_url: str, tenant: str) -> str:
     # 1. 인증 요청
     resp = requests.post(
         f"{base_url}/api/printer/auth/request",
-        json={"tenant": tenant},
+        json={"tenant": tenant, "type": "garment"},
         timeout=10,
     )
     resp.raise_for_status()
