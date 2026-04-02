@@ -87,14 +87,14 @@ def _resolve_gtx4cmd():
     explicit = _ini.get("gtx4cmd", "exe_path", fallback="")
     if explicit and os.path.isfile(explicit):
         return explicit
-    # .source 폴더에서 탐색
+    # exe와 같은 폴더 (배포 시 기본)
+    same_dir = os.path.join(BASE_DIR, "GTX4CMD.exe")
+    if os.path.isfile(same_dir):
+        return same_dir
+    # .source 폴더 (개발 시)
     source = os.path.join(BASE_DIR, ".source", "GTX4CMD.exe")
     if os.path.isfile(source):
         return source
-    # PyInstaller 번들
-    bundled = os.path.join(getattr(sys, "_MEIPASS", BASE_DIR), ".source", "GTX4CMD.exe")
-    if os.path.isfile(bundled):
-        return bundled
     return ""
 
 GTX4CMD_EXE = _resolve_gtx4cmd()
