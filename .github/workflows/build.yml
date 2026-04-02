@@ -24,6 +24,18 @@ jobs:
         working-directory: watcher
         run: pip install -r requirements.txt
 
+      - name: Install poppler via MSYS2
+        id: poppler
+        shell: pwsh
+        run: |
+          C:\msys64\usr\bin\pacman.exe -S --noconfirm mingw-w64-x86_64-poppler
+          $popplerBin = "C:\msys64\mingw64\bin"
+          if (-not (Test-Path "$popplerBin\pdftoppm.exe")) {
+            Write-Error "pdftoppm.exe not found in $popplerBin"
+            exit 1
+          }
+          echo "bin=$popplerBin" >> $env:GITHUB_OUTPUT
+
       - name: Build exe
         working-directory: watcher
         run: |
@@ -32,6 +44,7 @@ jobs:
             --hidden-import=win32ui `
             --hidden-import=win32api `
             --collect-all customtkinter `
+            --add-data "${{ steps.poppler.outputs.bin }};poppler" `
             --name gtx4-watcher `
             main.py
 
@@ -41,7 +54,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path release -Force
           Copy-Item dist/gtx4-watcher.exe release/
-          Copy-Item config.py release/
           # config.ini 기본값 생성용으로 한번 실행
           python -c "import sys; sys.path.insert(0,'.'); import config"
           Copy-Item config.ini release/
