@@ -45,7 +45,7 @@ jobs:
             --hidden-import=win32api `
             --collect-all customtkinter `
             --add-data "${{ steps.poppler.outputs.bin }};poppler" `
-            --name gtx4-watcher `
+            --name gtx4-manager `
             main.py
 
       - name: Prepare release assets
@@ -53,15 +53,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release -Force
-          Copy-Item dist/gtx4-watcher.exe release/
+          Copy-Item dist/gtx4-manager.exe release/
           # config.ini 기본값 생성용으로 한번 실행
           python -c "import sys; sys.path.insert(0,'.'); import config"
           Copy-Item config.ini release/
-          Compress-Archive -Path release/* -DestinationPath ../gtx4-watcher-${{ github.ref_name }}.zip
+          Compress-Archive -Path release/* -DestinationPath ../gtx4-manager-${{ github.ref_name }}.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.3.2
         with:
           name: ${{ github.ref_name }}
           generate_release_notes: true
-          files: gtx4-watcher-${{ github.ref_name }}.zip
+          files: gtx4-manager-${{ github.ref_name }}.zip

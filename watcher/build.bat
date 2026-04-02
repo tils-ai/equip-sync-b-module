@@ -6,8 +6,8 @@ pyinstaller --onefile --windowed ^
     --hidden-import=win32api ^
     --collect-all customtkinter ^
     --add-data ".source;.source" ^
-    --name gtx4-watcher ^
+    --name gtx4-manager ^
     main.py
 echo.
-echo 빌드 완료: dist\gtx4-watcher.exe
+echo 빌드 완료: dist\gtx4-manager.exe
 pause
