@@ -16,6 +16,7 @@ INI_PATH = os.path.join(BASE_DIR, "config.ini")
 _DEFAULT_INI = """\
 [printer]
 ; Windows 설정 > 프린터에서 정확한 이름 확인
+; 여러 개 지정 시 콤마 구분 (첫 번째 실패 시 다음 프린터로 자동 폴백)
 name = Brother GTX-4
 ; 출력 모드: direct (win32print 직접) / gtx4cmd (GTX4CMD.exe 경유)
 mode = direct
@@ -31,7 +32,7 @@ ink = 0
 copies = 1
 ; 인쇄 위치 (8자리, 앞4=좌측여백, 뒤4=상단여백, 단위 0.1mm)
 position = 00000000
-; RGB(255,255,255) 해석: 0=투명, 1=화이트
+; RGB(255,255,255) 해석: 0=투명, 1=화이트 잉크 (색있는 옷에서 흰 디자인 필요 시 1)
 white_as = 0
 
 [folder]
@@ -71,8 +72,14 @@ if not os.path.exists(INI_PATH):
 _ini = configparser.ConfigParser()
 _ini.read(INI_PATH, encoding="utf-8")
 
+def _parse_printer_names(raw: str) -> list[str]:
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return names or ["Brother GTX-4"]
+
+
 # --- printer ---
-PRINTER_NAME = _ini.get("printer", "name", fallback="Brother GTX-4")
+PRINTER_NAMES = _parse_printer_names(_ini.get("printer", "name", fallback="Brother GTX-4"))
+PRINTER_NAME = PRINTER_NAMES[0]  # 하위호환: 단일 참조 시 첫 번째 프린터
 PRINTER_MODE = _ini.get("printer", "mode", fallback="direct")
 
 # --- gtx4cmd ---
@@ -81,6 +88,15 @@ INK = _ini.getint("gtx4cmd", "ink", fallback=0)
 COPIES = _ini.getint("gtx4cmd", "copies", fallback=1)
 POSITION = _ini.get("gtx4cmd", "position", fallback="00000000")
 WHITE_AS = _ini.getint("gtx4cmd", "white_as", fallback=0)
+
+# 플래튼 크기 (0.1mm 단위, 너비 x 높이) — 인치 → 25.4mm 환산
+PLATEN_DIMS = {
+    0: (4064, 5334),  # 16x21 inches
+    1: (4064, 4572),  # 16x18 inches
+    2: (3556, 4064),  # 14x16 inches
+    3: (2540, 3048),  # 10x12 inches
+    4: (1778, 2032),  # 7x8 inches
+}
 
 # --- gtx4cmd exe 경로 ---
 def _resolve_gtx4cmd():
@@ -147,14 +163,15 @@ def save_value(section: str, key: str, value: str):
 
 def reload():
     """config.ini를 다시 읽어서 모듈 변수를 갱신한다."""
-    global PRINTER_NAME, PRINTER_MODE, PLATEN_SIZE, INK, COPIES
+    global PRINTER_NAME, PRINTER_NAMES, PRINTER_MODE, PLATEN_SIZE, INK, COPIES
     global POSITION, WHITE_AS, GTX4CMD_EXE
     global WATCH_DIR, DONE_DIR, ERROR_DIR, RENDER_DPI, POPPLER_PATH
     global API_TENANT, API_KEY, API_BASE_URL, API_POLL_INTERVAL, DOWNLOAD_DIR
 
     _ini.read(INI_PATH, encoding="utf-8")
 
-    PRINTER_NAME = _ini.get("printer", "name", fallback="Brother GTX-4")
+    PRINTER_NAMES = _parse_printer_names(_ini.get("printer", "name", fallback="Brother GTX-4"))
+    PRINTER_NAME = PRINTER_NAMES[0]
     PRINTER_MODE = _ini.get("printer", "mode", fallback="direct")
     PLATEN_SIZE = _ini.getint("gtx4cmd", "platen_size", fallback=0)
     INK = _ini.getint("gtx4cmd", "ink", fallback=0)
