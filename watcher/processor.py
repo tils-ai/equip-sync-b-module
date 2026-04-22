@@ -61,13 +61,15 @@ def _load_images(file_path: str) -> list[Image.Image]:
 
 
 def _load_from_pdf(file_path: str) -> list[Image.Image]:
-    """PDF → PIL Image 리스트."""
+    """PDF → PIL Image 리스트 (투명 배경 보존)."""
     from pdf2image import convert_from_path
 
     return convert_from_path(
         file_path,
         dpi=config.RENDER_DPI,
         poppler_path=config.POPPLER_PATH,
+        transparent=True,
+        use_pdftocairo=True,
     )
 
 
@@ -114,14 +116,10 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
             png_path = os.path.join(tmp_dir, f"page_{i}.png")
             arx4_path = os.path.join(tmp_dir, f"page_{i}.arx4")
 
-            # PNG로 변환 저장 (GTX4CMD.exe는 PNG만 지원)
-            if img.mode == "RGBA":
-                img.save(png_path, "PNG")
-            else:
-                img.convert("RGB").save(png_path, "PNG")
+            _flatten_to_white(img).save(png_path, "PNG")
 
             logger.info("  페이지 %d/%d ARX4 생성 중...", i + 1, len(images))
-            rc = create_arx4(xml_path, png_path, arx4_path)
+            rc = create_arx4(xml_path, png_path, arx4_path, white=config.WHITE_AS)
             if rc != 0:
                 raise RuntimeError(f"ARX4 생성 실패 (코드: {rc})")
 
@@ -131,6 +129,21 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
                 raise RuntimeError(f"프린터 전송 실패 (코드: {rc})")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _flatten_to_white(img: Image.Image) -> Image.Image:
+    """RGBA 알파 이진화(임계 128) 후 배경을 정확한 RGB(255,255,255)로 합성.
+
+    GTX4CMD의 `-W 0`(기본)은 정확한 RGB(255,255,255) 픽셀만 투명으로 해석하므로,
+    안티앨리어싱/렌더 오차로 '거의 흰색'이 된 배경 픽셀이 잉크로 분사되는 것을 막는다.
+    """
+    if img.mode != "RGBA":
+        return img.convert("RGB")
+    alpha = img.split()[3]
+    mask = alpha.point(lambda a: 255 if a >= 128 else 0)
+    flat = Image.new("RGB", img.size, (255, 255, 255))
+    flat.paste(img.convert("RGB"), mask=mask)
+    return flat
 
 
 def _unique_path(path: str) -> str:
