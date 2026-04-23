@@ -112,6 +112,10 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
         xml_path = os.path.join(tmp_dir, "settings.xml")
         build_xml(xml_path)
 
+        # -S와 -R은 상호 배타 — SIZE가 있으면 우선, 없을 때만 MAGNIFICATION 사용
+        size = config.SIZE or None
+        magnification = (config.MAGNIFICATION or None) if not size else None
+
         for i, img in enumerate(images):
             png_path = os.path.join(tmp_dir, f"page_{i}.png")
             arx4_path = os.path.join(tmp_dir, f"page_{i}.arx4")
@@ -119,7 +123,10 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
             _flatten_to_white(img).save(png_path, "PNG")
 
             logger.info("  페이지 %d/%d ARX4 생성 중...", i + 1, len(images))
-            rc = create_arx4(xml_path, png_path, arx4_path, white=config.WHITE_AS)
+            rc = create_arx4(
+                xml_path, png_path, arx4_path,
+                size=size, magnification=magnification, white=config.WHITE_AS,
+            )
             if rc != 0:
                 raise RuntimeError(f"ARX4 생성 실패 (코드: {rc})")
 
