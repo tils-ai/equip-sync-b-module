@@ -46,8 +46,8 @@ class WatcherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Brother GTX-4 Manager")
-        self.geometry("720x620")
-        self.minsize(600, 480)
+        self.geometry("1040x640")
+        self.minsize(920, 560)
         self.configure(fg_color=_BG)
 
         ctk.set_appearance_mode("dark")
@@ -79,17 +79,22 @@ class WatcherApp(ctk.CTk):
 
     def _build_ui(self):
         self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=0)
         self.grid_rowconfigure(0, weight=1)
 
         # 탭 뷰
         self._tabview = ctk.CTkTabview(self, fg_color=_BG, segmented_button_fg_color=_FRAME_BG)
-        self._tabview.grid(row=0, column=0, padx=8, pady=8, sticky="nsew")
+        self._tabview.grid(row=0, column=0, padx=(8, 4), pady=8, sticky="nsew")
 
         self._tab_watcher = self._tabview.add("Watcher")
         self._tab_agent = self._tabview.add("Agent")
 
         self._build_watcher_tab(self._tab_watcher)
         self._build_agent_tab(self._tab_agent)
+
+        # GTX4CMD 파라미터 패널 (우측)
+        self._param_panel = ParameterPanel(self)
+        self._param_panel.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="ns")
 
     def _build_watcher_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
@@ -527,3 +532,158 @@ class SettingsDialog(ctk.CTkToplevel):
         config.reload()
         logger.info("설정 저장 완료 (재시작 시 적용)")
         self.destroy()
+
+
+class ParameterPanel(ctk.CTkFrame):
+    """우측 GTX4CMD 전체 파라미터 패널 (CLI 인자 + XML 요소)."""
+
+    _WIDTH = 300
+
+    # 각 파라미터 정의: (key, label, kind, options_or_none, config_attr)
+    # kind: "entry" | "combo" | "switch"
+    _SECTIONS = [
+        ("CLI 인자", [
+            ("position", "위치 8자리", "entry", None, "POSITION"),
+            ("size", "크기 8자리 (-S)", "entry", None, "SIZE"),
+            ("magnification", "배율 4자리 (-R)", "entry", None, "MAGNIFICATION"),
+            ("white_as", "-W 255해석", "combo", [(0, "0: 투명"), (1, "1: 화이트")], "WHITE_AS"),
+        ]),
+        ("기본", [
+            ("copies", "매수 1~999", "entry", None, "COPIES"),
+            ("machine_mode", "머신 모드", "combo", [(0, "0: GTX-422")], "MACHINE_MODE"),
+            ("resolution", "해상도", "combo", [(1, "1: 1200dpi")], "RESOLUTION"),
+            ("platen_size", "플래튼", "combo", [
+                (0, "0: 16x21"), (1, "1: 16x18"), (2, "2: 14x16"),
+                (3, "3: 10x12"), (4, "4: 7x8"),
+            ], "PLATEN_SIZE"),
+        ]),
+        ("잉크", [
+            ("ink", "byInk 조합", "combo", [
+                (0, "0: Color"), (1, "1: White"),
+                (2, "2: C+W"), (3, "3: Black"),
+            ], "INK"),
+            ("eco_mode", "Eco 모드 (ink=2)", "switch", None, "ECO_MODE"),
+            ("material_black", "배경 검정 (ink=2)", "switch", None, "MATERIAL_BLACK"),
+            ("multiple", "멀티패스 (ink=0/2)", "switch", None, "MULTIPLE"),
+            ("uni_print", "단방향 인쇄", "switch", None, "UNI_PRINT"),
+        ]),
+        ("화이트 잉크 (ink=1/2)", [
+            ("highlight", "하이라이트 1~9", "entry", None, "HIGHLIGHT"),
+            ("mask", "마스크 1~5", "entry", None, "MASK"),
+            ("min_white", "최소흰도 1~6", "entry", None, "MIN_WHITE"),
+            ("choke", "초크 0~10", "entry", None, "CHOKE"),
+            ("pause", "W/C 일시정지", "switch", None, "PAUSE"),
+        ]),
+        ("컬러 잉크 (ink=0)", [
+            ("ink_volume", "잉크량 1~10", "entry", None, "INK_VOLUME"),
+            ("double_print", "더블프린팅 0~3", "entry", None, "DOUBLE_PRINT"),
+        ]),
+        ("투명색 (ink=1/2)", [
+            ("trans_color", "사용", "switch", None, "TRANS_COLOR"),
+            ("color_trans", "RGB 10진", "entry", None, "COLOR_TRANS"),
+            ("tolerance", "톨러런스 0~50", "entry", None, "TOLERANCE"),
+        ]),
+        ("이미지 조정", [
+            ("saturation", "채도 0~40", "entry", None, "SATURATION"),
+            ("brightness", "명도 0~40", "entry", None, "BRIGHTNESS"),
+            ("contrast", "대비 0~40", "entry", None, "CONTRAST"),
+        ]),
+        ("컬러밸런스 -5~5 (ink=0/2)", [
+            ("cyan_balance", "Cyan", "entry", None, "CYAN_BALANCE"),
+            ("magenta_balance", "Magenta", "entry", None, "MAGENTA_BALANCE"),
+            ("yellow_balance", "Yellow", "entry", None, "YELLOW_BALANCE"),
+            ("black_balance", "Black", "entry", None, "BLACK_BALANCE"),
+        ]),
+    ]
+
+    def __init__(self, parent):
+        super().__init__(parent, fg_color=_FRAME_BG, corner_radius=8, width=self._WIDTH)
+        self.grid_propagate(False)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            self, text="GTX4CMD 파라미터",
+            font=(_FONT, 12, "bold"), text_color=_TEXT,
+        ).grid(row=0, column=0, padx=10, pady=(10, 4), sticky="w")
+
+        self._scroll = ctk.CTkScrollableFrame(
+            self, fg_color="transparent", corner_radius=0,
+        )
+        self._scroll.grid(row=1, column=0, padx=6, pady=0, sticky="nsew")
+        self._scroll.grid_columnconfigure(1, weight=1)
+
+        self._rows: dict = {}
+        self._build_rows()
+
+        save_btn = ctk.CTkButton(
+            self, text="저장", command=self._save,
+            font=(_FONT, 12), fg_color=_BLUE,
+            hover_color="#6B8EA8", corner_radius=6, height=28,
+        )
+        save_btn.grid(row=2, column=0, padx=10, pady=(6, 10), sticky="ew")
+
+    def _build_rows(self):
+        row = 0
+        for section, params in self._SECTIONS:
+            ctk.CTkLabel(
+                self._scroll, text=section,
+                font=(_FONT, 10, "bold"), text_color=_TEXT_MUTED,
+            ).grid(row=row, column=0, columnspan=2, padx=2, pady=(8, 2), sticky="w")
+            row += 1
+
+            for key, label, kind, options, attr in params:
+                current = getattr(config, attr)
+                ctk.CTkLabel(
+                    self._scroll, text=label,
+                    font=(_FONT, 10), text_color=_TEXT_MUTED,
+                ).grid(row=row, column=0, padx=(2, 4), pady=1, sticky="w")
+
+                if kind == "entry":
+                    widget = ctk.CTkEntry(
+                        self._scroll, font=(_FONT, 10),
+                        fg_color=_LOG_BG, text_color=_TEXT, height=24,
+                    )
+                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="ew")
+                    widget.insert(0, str(current))
+                elif kind == "combo":
+                    display = [label_ for _, label_ in options]
+                    match = next(
+                        (label_ for val, label_ in options if val == current),
+                        display[0],
+                    )
+                    widget = ctk.CTkComboBox(
+                        self._scroll, values=display, font=(_FONT, 10),
+                        fg_color=_LOG_BG, text_color=_TEXT,
+                        dropdown_fg_color=_FRAME_BG, height=24, state="readonly",
+                    )
+                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="ew")
+                    widget.set(match)
+                else:  # switch
+                    widget = ctk.CTkSwitch(
+                        self._scroll, text="", width=36, height=18,
+                    )
+                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="w")
+                    if current:
+                        widget.select()
+                    else:
+                        widget.deselect()
+
+                self._rows[key] = (kind, widget)
+                row += 1
+
+    def _save(self):
+        for key in config.GTX4CMD_KEYS:
+            if key not in self._rows:
+                continue
+            kind, widget = self._rows[key]
+            if kind == "entry":
+                value = widget.get().strip()
+            elif kind == "combo":
+                value = widget.get().split(":", 1)[0].strip()
+            else:  # switch
+                value = "true" if widget.get() == 1 else "false"
+            config.save_value("gtx4cmd", key, value)
+
+        config.reload()
+        logger.info("GTX4CMD 파라미터 저장 완료 (재시작 시 적용)")
