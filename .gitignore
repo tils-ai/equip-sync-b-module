@@ -1,2 +1,12 @@
 .history
 .source
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 로컬 설정 (사용자별 자동 생성)
+watcher/config.ini
