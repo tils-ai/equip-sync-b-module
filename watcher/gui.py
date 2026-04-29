@@ -543,6 +543,8 @@ class ParameterPanel(ctk.CTkFrame):
     # kind: "entry" | "combo" | "switch"
     _SECTIONS = [
         ("CLI 인자", [
+            ("auto_center", "자동 중앙 정렬", "switch", None, "AUTO_CENTER"),
+            ("auto_fit", "자동 맞춤 배율", "switch", None, "AUTO_FIT"),
             ("position", "위치 8자리", "entry", None, "POSITION"),
             ("size", "크기 8자리 (-S)", "entry", None, "SIZE"),
             ("magnification", "배율 4자리 (-R)", "entry", None, "MAGNIFICATION"),
