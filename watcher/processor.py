@@ -94,12 +94,12 @@ def _load_from_zip(file_path: str) -> list[Image.Image]:
 
 
 def _print_via_direct(images: list[Image.Image]):
-    """win32print 직접 출력."""
+    """win32print 직접 출력. 가먼트 잉크 과소비 방지를 위해 흰 배경 평탄화."""
     from printer import print_image
 
     for i, img in enumerate(images, 1):
         logger.info("  페이지 %d/%d 출력 중...", i, len(images))
-        print_image(img)
+        print_image(_flatten_to_white(img))
 
 
 def _print_via_gtx4cmd(images: list[Image.Image]):
@@ -123,17 +123,12 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
 
             _flatten_to_white(img).save(png_path, "PNG")
 
-            # SIZE 명시 시 그 값 우선; 아니면 auto_fit으로 -R 계산, 아니면 수동 MAGNIFICATION
+            # SIZE 명시 시 그 값 우선, 아니면 수동 MAGNIFICATION, 아니면 원본 크기
             base_w, base_h = _image_dims_mm10(img)
             if manual_size:
                 size = manual_size
                 magnification = None
                 eff_w, eff_h = _parse_size(manual_size, base_w, base_h)
-            elif config.AUTO_FIT:
-                size = None
-                magnification = _calc_fit_magnification(base_w, base_h, platen_w, platen_h)
-                mag = int(magnification) / 1000.0
-                eff_w, eff_h = int(round(base_w * mag)), int(round(base_h * mag))
             else:
                 size = None
                 magnification = config.MAGNIFICATION or None
@@ -146,6 +141,12 @@ def _print_via_gtx4cmd(images: list[Image.Image]):
             position = (
                 _calc_center_position(eff_w, eff_h, platen_w, platen_h)
                 if config.AUTO_CENTER else None
+            )
+
+            logger.info(
+                "  배치 — 이미지 %dx%d (0.1mm), 플래튼 %dx%d, 위치 %s",
+                eff_w, eff_h, platen_w, platen_h,
+                position or config.POSITION,
             )
 
             logger.info("  페이지 %d/%d ARX4 생성 중...", i + 1, len(images))
@@ -181,15 +182,6 @@ def _parse_size(size_str: str, fallback_w: int, fallback_h: int) -> tuple[int, i
     if size_str and len(size_str) == 8 and size_str.isdigit():
         return int(size_str[:4]), int(size_str[4:])
     return fallback_w, fallback_h
-
-
-def _calc_fit_magnification(img_w: int, img_h: int, platen_w: int, platen_h: int) -> str:
-    """이미지가 플래튼 안에 비율 유지하며 꽉 차도록 4자리 0.1% 배율 계산."""
-    if img_w <= 0 or img_h <= 0:
-        return "1000"
-    scale = min(platen_w / img_w, platen_h / img_h)
-    val = max(1, min(9999, int(round(scale * 1000))))
-    return f"{val:04d}"
 
 
 def _calc_center_position(img_w: int, img_h: int, platen_w: int, platen_h: int) -> str:

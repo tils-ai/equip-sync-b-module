@@ -27,13 +27,11 @@ exe_path =
 ; ── CLI 인자 ──
 ; 자동 중앙 정렬 (true=이미지/플래튼 기준 position 자동 계산, false=아래 position 값 사용)
 auto_center = true
-; 자동 맞춤 배율 (true=이미지가 플래튼에 꽉 차도록 비율 유지하며 -R 자동 계산, false=아래 magnification 사용; size가 설정되면 무시)
-auto_fit = true
 ; 인쇄 위치 (8자리, 앞4=좌측여백, 뒤4=상단여백, 단위 0.1mm; auto_center=false일 때만 사용)
 position = 00000000
-; 인쇄 크기 (8자리, 앞4=너비, 뒤4=높이, 단위 0.1mm; 비워두면 -S 미사용; 설정 시 auto_fit/magnification 무시)
+; 인쇄 크기 (8자리, 앞4=너비, 뒤4=높이, 단위 0.1mm; 비워두면 -S 미사용; 설정 시 magnification 무시)
 size =
-; 배율 (4자리, 단위 0.1%, 1000=100%; 비워두면 -R 미사용; auto_fit=false일 때만 사용; -S와 동시 사용 불가)
+; 배율 (4자리, 단위 0.1%, 1000=100%; 비워두면 -R 미사용; -S와 동시 사용 불가)
 magnification =
 ; RGB(255,255,255) 해석: 0=투명, 1=화이트 잉크 (색있는 옷에서 흰 디자인 필요 시 1)
 white_as = 0
@@ -159,7 +157,6 @@ def _load_gtx4cmd() -> dict:
     return {
         # CLI
         "AUTO_CENTER": _b("auto_center", True),
-        "AUTO_FIT": _b("auto_fit", True),
         "POSITION": _s("position", "00000000") or "00000000",
         "SIZE": _s("size"),
         "MAGNIFICATION": _s("magnification"),
@@ -196,7 +193,6 @@ def _load_gtx4cmd() -> dict:
 
 _gtx = _load_gtx4cmd()
 AUTO_CENTER = _gtx["AUTO_CENTER"]
-AUTO_FIT = _gtx["AUTO_FIT"]
 POSITION = _gtx["POSITION"]
 SIZE = _gtx["SIZE"]
 MAGNIFICATION = _gtx["MAGNIFICATION"]
@@ -230,7 +226,7 @@ UNI_PRINT = _gtx["UNI_PRINT"]
 
 # GUI 파라미터 패널에서 사용하는 GTX4CMD 파라미터 키 목록 (저장 시 순서 보존)
 GTX4CMD_KEYS = [
-    "auto_center", "auto_fit", "position", "size", "magnification", "white_as",
+    "auto_center", "position", "size", "magnification", "white_as",
     "copies", "machine_mode", "resolution", "platen_size", "ink",
     "eco_mode", "highlight", "mask", "ink_volume", "double_print",
     "material_black", "multiple", "trans_color", "color_trans", "tolerance",
@@ -315,7 +311,7 @@ def save_value(section: str, key: str, value: str):
 def reload():
     """config.ini를 다시 읽어서 모듈 변수를 갱신한다."""
     global PRINTER_NAME, PRINTER_NAMES, PRINTER_MODE, GTX4CMD_EXE
-    global AUTO_CENTER, AUTO_FIT, POSITION, SIZE, MAGNIFICATION, WHITE_AS
+    global AUTO_CENTER, POSITION, SIZE, MAGNIFICATION, WHITE_AS
     global COPIES, MACHINE_MODE, RESOLUTION, PLATEN_SIZE, INK
     global ECO_MODE, HIGHLIGHT, MASK, INK_VOLUME, DOUBLE_PRINT
     global MATERIAL_BLACK, MULTIPLE, TRANS_COLOR, COLOR_TRANS, TOLERANCE
@@ -333,7 +329,7 @@ def reload():
     GTX4CMD_EXE = _resolve_gtx4cmd()
 
     g = _load_gtx4cmd()
-    AUTO_CENTER = g["AUTO_CENTER"]; AUTO_FIT = g["AUTO_FIT"]
+    AUTO_CENTER = g["AUTO_CENTER"]
     POSITION = g["POSITION"]; SIZE = g["SIZE"]; MAGNIFICATION = g["MAGNIFICATION"]; WHITE_AS = g["WHITE_AS"]
     COPIES = g["COPIES"]; MACHINE_MODE = g["MACHINE_MODE"]; RESOLUTION = g["RESOLUTION"]
     PLATEN_SIZE = g["PLATEN_SIZE"]; INK = g["INK"]
