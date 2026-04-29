@@ -1,7 +1,10 @@
 import ctypes
 import logging
+import os
 import queue
+import subprocess
 import sys
+from tkinter import messagebox
 
 if sys.platform == "win32":
     try:
@@ -29,6 +32,16 @@ _LOG_TEXT = "#D0CCC8"
 _FONT = "Malgun Gothic"
 
 
+def _prompt_restart(app: "WatcherApp"):
+    """설정 저장 후 재시작 여부 확인. 사용자가 동의하면 즉시 재시작."""
+    if messagebox.askyesno(
+        "재시작",
+        "설정 변경 사항을 적용하려면 재시작이 필요합니다.\n지금 재시작하시겠습니까?",
+        parent=app,
+    ):
+        app.restart_app()
+
+
 class QueueHandler(logging.Handler):
     """로그를 큐로 전달하여 GUI에서 소비."""
 
@@ -46,8 +59,8 @@ class WatcherApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Brother GTX-4 Manager")
-        self.geometry("1040x640")
-        self.minsize(920, 560)
+        self.geometry("1240x760")
+        self.minsize(1080, 640)
         self.configure(fg_color=_BG)
 
         ctk.set_appearance_mode("dark")
@@ -182,7 +195,7 @@ class WatcherApp(ctk.CTk):
 
     def _build_agent_tab(self, parent):
         parent.grid_columnconfigure(0, weight=1)
-        parent.grid_rowconfigure(2, weight=1)
+        parent.grid_rowconfigure(3, weight=1)
 
         # --- 연결 상태 ---
         status_frame = ctk.CTkFrame(parent, fg_color=_FRAME_BG, corner_radius=8)
@@ -224,6 +237,17 @@ class WatcherApp(ctk.CTk):
                 font=(_FONT, 12), text_color=_TEXT,
             ).grid(row=i, column=1, padx=(0, 12), pady=2, sticky="w")
 
+        # --- 설정 버튼 ---
+        agent_settings_btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        agent_settings_btn_frame.grid(row=2, column=0, padx=8, pady=(0, 4), sticky="ew")
+
+        self._agent_settings_btn = ctk.CTkButton(
+            agent_settings_btn_frame, text="⚙ 설정", command=self._open_settings,
+            font=(_FONT, 12), fg_color=_GRAY, hover_color="#6B6360",
+            corner_radius=8, width=80, height=28,
+        )
+        self._agent_settings_btn.pack(side="right")
+
         # --- 로그 (공유) ---
         self._agent_log = ctk.CTkTextbox(
             parent, state="disabled",
@@ -231,11 +255,11 @@ class WatcherApp(ctk.CTk):
             fg_color=_LOG_BG, text_color=_LOG_TEXT,
             corner_radius=8,
         )
-        self._agent_log.grid(row=2, column=0, padx=8, pady=4, sticky="nsew")
+        self._agent_log.grid(row=3, column=0, padx=8, pady=4, sticky="nsew")
 
         # --- 버튼 ---
         btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        btn_frame.grid(row=3, column=0, padx=8, pady=(4, 8), sticky="ew")
+        btn_frame.grid(row=4, column=0, padx=8, pady=(4, 8), sticky="ew")
         btn_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
         self._auth_btn = ctk.CTkButton(
@@ -390,6 +414,19 @@ class WatcherApp(ctk.CTk):
         self._stop_agent()
         self.destroy()
 
+    # ─── 재시작 ───
+
+    def restart_app(self):
+        """현재 watcher/agent 정지 후 새 프로세스로 재시작."""
+        self._stop()
+        self._stop_agent()
+        args = [sys.executable] if getattr(sys, "frozen", False) else [sys.executable, *sys.argv]
+        try:
+            subprocess.Popen(args, close_fds=True)
+        finally:
+            self.destroy()
+            os._exit(0)
+
 
 class SettingsDialog(ctk.CTkToplevel):
     """설정 편집 다이얼로그."""
@@ -397,8 +434,8 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("설정")
-        self.geometry("500x720")
-        self.minsize(500, 560)
+        self.geometry("520x860")
+        self.minsize(520, 760)
         self.configure(fg_color=_BG)
         self.transient(parent)
         self.grab_set()
@@ -533,162 +570,287 @@ class SettingsDialog(ctk.CTkToplevel):
         config.save_value("download", "dir", self._download_dir.get())
 
         config.reload()
-        logger.info("설정 저장 완료 (재시작 시 적용)")
+        logger.info("설정 저장 완료")
         self.destroy()
+        _prompt_restart(self._parent)
 
 
 class ParameterPanel(ctk.CTkFrame):
-    """우측 GTX4CMD 전체 파라미터 패널 (CLI 인자 + XML 요소)."""
+    """우측 Print Settings 패널 — GTX Graphics Lab Print Settings 다이얼로그를 본뜸.
 
-    _WIDTH = 300
+    슬라이더/드롭다운/토글 위주, 변경 시 Print Time / Whiteness 추정값 즉시 반영.
+    """
 
-    # 각 파라미터 정의: (key, label, kind, options_or_none, config_attr)
-    # kind: "entry" | "combo" | "switch"
-    _SECTIONS = [
-        ("CLI 인자", [
-            ("auto_center", "자동 중앙 정렬", "switch", None, "AUTO_CENTER"),
-            ("auto_fit", "자동 맞춤 배율", "switch", None, "AUTO_FIT"),
-            ("position", "위치 8자리", "entry", None, "POSITION"),
-            ("size", "크기 8자리 (-S)", "entry", None, "SIZE"),
-            ("magnification", "배율 4자리 (-R)", "entry", None, "MAGNIFICATION"),
-            ("white_as", "-W 255해석", "combo", [(0, "0: 투명"), (1, "1: 화이트")], "WHITE_AS"),
-        ]),
-        ("기본", [
-            ("copies", "매수 1~999", "entry", None, "COPIES"),
-            ("machine_mode", "머신 모드", "combo", [(0, "0: GTX-422")], "MACHINE_MODE"),
-            ("resolution", "해상도", "combo", [(1, "1: 1200dpi")], "RESOLUTION"),
-            ("platen_size", "플래튼", "combo", [
-                (0, "0: 16x21"), (1, "1: 16x18"), (2, "2: 14x16"),
-                (3, "3: 10x12"), (4, "4: 7x8"),
-            ], "PLATEN_SIZE"),
-        ]),
-        ("잉크", [
-            ("ink", "byInk 조합", "combo", [
-                (0, "0: Color"), (1, "1: White"),
-                (2, "2: C+W"), (3, "3: Black"),
-            ], "INK"),
-            ("eco_mode", "Eco 모드 (ink=2)", "switch", None, "ECO_MODE"),
-            ("material_black", "배경 검정 (ink=2)", "switch", None, "MATERIAL_BLACK"),
-            ("multiple", "멀티패스 (ink=0/2)", "switch", None, "MULTIPLE"),
-            ("uni_print", "단방향 인쇄", "switch", None, "UNI_PRINT"),
-        ]),
-        ("화이트 잉크 (ink=1/2)", [
-            ("highlight", "하이라이트 1~9", "entry", None, "HIGHLIGHT"),
-            ("mask", "마스크 1~5", "entry", None, "MASK"),
-            ("min_white", "최소흰도 1~6", "entry", None, "MIN_WHITE"),
-            ("choke", "초크 0~10", "entry", None, "CHOKE"),
-            ("pause", "W/C 일시정지", "switch", None, "PAUSE"),
-        ]),
-        ("컬러 잉크 (ink=0)", [
-            ("ink_volume", "잉크량 1~10", "entry", None, "INK_VOLUME"),
-            ("double_print", "더블프린팅 0~3", "entry", None, "DOUBLE_PRINT"),
-        ]),
-        ("투명색 (ink=1/2)", [
-            ("trans_color", "사용", "switch", None, "TRANS_COLOR"),
-            ("color_trans", "RGB 10진", "entry", None, "COLOR_TRANS"),
-            ("tolerance", "톨러런스 0~50", "entry", None, "TOLERANCE"),
-        ]),
-        ("이미지 조정", [
-            ("saturation", "채도 0~40", "entry", None, "SATURATION"),
-            ("brightness", "명도 0~40", "entry", None, "BRIGHTNESS"),
-            ("contrast", "대비 0~40", "entry", None, "CONTRAST"),
-        ]),
-        ("컬러밸런스 -5~5 (ink=0/2)", [
-            ("cyan_balance", "Cyan", "entry", None, "CYAN_BALANCE"),
-            ("magenta_balance", "Magenta", "entry", None, "MAGENTA_BALANCE"),
-            ("yellow_balance", "Yellow", "entry", None, "YELLOW_BALANCE"),
-            ("black_balance", "Black", "entry", None, "BLACK_BALANCE"),
-        ]),
-    ]
+    _WIDTH = 480
+
+    _OPTS_PLATEN = [(0, "16x21 inches"), (1, "16x18 inches"), (2, "14x16 inches"),
+                    (3, "10x12 inches"), (4, "7x8 inches")]
+    _OPTS_INK = [(0, "Color Ink"), (1, "White Ink"), (2, "Color + White Ink"), (3, "Black Ink")]
+    _OPTS_MACHINE = [(0, "GTX-422")]
+    _OPTS_RESOLUTION = [(1, "1200dpi")]
+    _OPTS_WHITE_AS = [(0, "Transparent"), (1, "White Ink")]
 
     def __init__(self, parent):
         super().__init__(parent, fg_color=_FRAME_BG, corner_radius=8, width=self._WIDTH)
+        self._parent = parent
         self.grid_propagate(False)
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(
-            self, text="GTX4CMD 파라미터",
-            font=(_FONT, 12, "bold"), text_color=_TEXT,
-        ).grid(row=0, column=0, padx=10, pady=(10, 4), sticky="w")
+            self, text="Print Settings",
+            font=(_FONT, 13, "bold"), text_color=_TEXT,
+        ).grid(row=0, column=0, padx=12, pady=(12, 4), sticky="w")
 
-        self._scroll = ctk.CTkScrollableFrame(
-            self, fg_color="transparent", corner_radius=0,
-        )
+        self._scroll = ctk.CTkScrollableFrame(self, fg_color="transparent", corner_radius=0)
         self._scroll.grid(row=1, column=0, padx=6, pady=0, sticky="nsew")
         self._scroll.grid_columnconfigure(1, weight=1)
 
-        self._rows: dict = {}
-        self._build_rows()
+        self._widgets: dict = {}
+        self._row = 0
+        self._build_sections()
+
+        # 하단 추정값 (Print Time × / Whiteness %)
+        status = ctk.CTkFrame(self, fg_color=_LOG_BG, corner_radius=6)
+        status.grid(row=2, column=0, padx=10, pady=(6, 4), sticky="ew")
+        status.grid_columnconfigure((0, 1), weight=1)
+        self._print_time_label = ctk.CTkLabel(
+            status, text="Print Time x1.00",
+            font=(_FONT, 11), text_color=_TEXT,
+        )
+        self._print_time_label.grid(row=0, column=0, padx=10, pady=6, sticky="w")
+        self._whiteness_label = ctk.CTkLabel(
+            status, text="Whiteness 0%",
+            font=(_FONT, 11), text_color=_TEXT,
+        )
+        self._whiteness_label.grid(row=0, column=1, padx=10, pady=6, sticky="e")
 
         save_btn = ctk.CTkButton(
             self, text="저장", command=self._save,
             font=(_FONT, 12), fg_color=_BLUE,
-            hover_color="#6B8EA8", corner_radius=6, height=28,
+            hover_color="#6B8EA8", corner_radius=6, height=32,
         )
-        save_btn.grid(row=2, column=0, padx=10, pady=(6, 10), sticky="ew")
+        save_btn.grid(row=3, column=0, padx=10, pady=(4, 10), sticky="ew")
 
-    def _build_rows(self):
-        row = 0
-        for section, params in self._SECTIONS:
-            ctk.CTkLabel(
-                self._scroll, text=section,
-                font=(_FONT, 10, "bold"), text_color=_TEXT_MUTED,
-            ).grid(row=row, column=0, columnspan=2, padx=2, pady=(8, 2), sticky="w")
-            row += 1
+        self._update_status()
 
-            for key, label, kind, options, attr in params:
-                current = getattr(config, attr)
-                ctk.CTkLabel(
-                    self._scroll, text=label,
-                    font=(_FONT, 10), text_color=_TEXT_MUTED,
-                ).grid(row=row, column=0, padx=(2, 4), pady=1, sticky="w")
+    # ─── 섹션 빌드 ───
 
-                if kind == "entry":
-                    widget = ctk.CTkEntry(
-                        self._scroll, font=(_FONT, 10),
-                        fg_color=_LOG_BG, text_color=_TEXT, height=24,
-                    )
-                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="ew")
-                    widget.insert(0, str(current))
-                elif kind == "combo":
-                    display = [label_ for _, label_ in options]
-                    match = next(
-                        (label_ for val, label_ in options if val == current),
-                        display[0],
-                    )
-                    widget = ctk.CTkComboBox(
-                        self._scroll, values=display, font=(_FONT, 10),
-                        fg_color=_LOG_BG, text_color=_TEXT,
-                        dropdown_fg_color=_FRAME_BG, height=24, state="readonly",
-                    )
-                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="ew")
-                    widget.set(match)
-                else:  # switch
-                    widget = ctk.CTkSwitch(
-                        self._scroll, text="", width=36, height=18,
-                    )
-                    widget.grid(row=row, column=1, padx=(0, 2), pady=1, sticky="w")
-                    if current:
-                        widget.select()
-                    else:
-                        widget.deselect()
+    def _build_sections(self):
+        self._add_header("Main Settings")
+        self._add_combo("machine_mode", "Machine Mode", "MACHINE_MODE", self._OPTS_MACHINE)
+        self._add_combo("resolution", "Resolution", "RESOLUTION", self._OPTS_RESOLUTION)
+        self._add_combo("ink", "Select Ink", "INK", self._OPTS_INK)
+        self._add_combo("platen_size", "Platen Size", "PLATEN_SIZE", self._OPTS_PLATEN)
+        self._add_switch("eco_mode", "Eco Mode", "ECO_MODE")
+        self._add_switch("material_black", "Use Background Black Color", "MATERIAL_BLACK")
+        self._add_switch("multiple", "Color Multiple Pass Printing", "MULTIPLE")
+        self._add_switch("uni_print", "Unidirectional Printing", "UNI_PRINT")
 
-                self._rows[key] = (kind, widget)
-                row += 1
+        self._add_header("White Ink Settings")
+        self._add_slider("highlight", "Highlight", "HIGHLIGHT", 1, 9)
+        self._add_slider("mask", "Mask", "MASK", 1, 5)
+        self._add_slider("min_white", "Min White", "MIN_WHITE", 1, 6)
+        self._add_slider("choke", "Choke", "CHOKE", 0, 10)
+        self._add_switch("pause", "W/C Pause", "PAUSE")
+
+        self._add_header("Color Ink Settings")
+        self._add_slider("ink_volume", "Ink Volume", "INK_VOLUME", 1, 10)
+        self._add_slider("double_print", "Double Printing", "DOUBLE_PRINT", 0, 3)
+
+        self._add_header("Transparent Color")
+        self._add_switch("trans_color", "Use Transparent Color", "TRANS_COLOR")
+        self._add_entry("color_trans", "RGB (decimal)", "COLOR_TRANS")
+        self._add_slider("tolerance", "Tolerance", "TOLERANCE", 0, 50)
+
+        self._add_header("Image Adjustment")
+        self._add_slider("saturation", "Saturation", "SATURATION", 0, 40)
+        self._add_slider("brightness", "Brightness", "BRIGHTNESS", 0, 40)
+        self._add_slider("contrast", "Contrast", "CONTRAST", 0, 40)
+
+        self._add_header("Color Balance")
+        self._add_slider("cyan_balance", "Cyan", "CYAN_BALANCE", -5, 5)
+        self._add_slider("magenta_balance", "Magenta", "MAGENTA_BALANCE", -5, 5)
+        self._add_slider("yellow_balance", "Yellow", "YELLOW_BALANCE", -5, 5)
+        self._add_slider("black_balance", "Black", "BLACK_BALANCE", -5, 5)
+
+        self._add_header("Position & Size")
+        self._add_switch("auto_center", "Auto Center", "AUTO_CENTER")
+        self._add_entry("position", "Position (8 digits)", "POSITION")
+        self._add_entry("size", "Size (8 digits)", "SIZE")
+        self._add_entry("magnification", "Magnification (4 digits)", "MAGNIFICATION")
+        self._add_combo("white_as", "RGB(255) Interpretation", "WHITE_AS", self._OPTS_WHITE_AS)
+
+        self._add_header("Output")
+        self._add_entry("copies", "Copies", "COPIES")
+
+    # ─── 위젯 헬퍼 ───
+
+    def _add_header(self, text: str):
+        if self._row > 0:
+            ctk.CTkFrame(self._scroll, fg_color="transparent", height=4).grid(
+                row=self._row, column=0, columnspan=3, sticky="ew",
+            )
+            self._row += 1
+        ctk.CTkLabel(
+            self._scroll, text=text,
+            font=(_FONT, 11, "bold"), text_color=_BLUE,
+        ).grid(row=self._row, column=0, columnspan=3, padx=4, pady=(8, 4), sticky="w")
+        self._row += 1
+
+    def _add_label(self, text: str):
+        ctk.CTkLabel(
+            self._scroll, text=text,
+            font=(_FONT, 11), text_color=_TEXT_MUTED,
+        ).grid(row=self._row, column=0, padx=(6, 8), pady=3, sticky="w")
+
+    def _add_combo(self, key: str, label: str, attr: str, options: list):
+        self._add_label(label)
+        current = getattr(config, attr)
+        display = [d for _, d in options]
+        match = next((d for v, d in options if v == current), display[0])
+        widget = ctk.CTkComboBox(
+            self._scroll, values=display, font=(_FONT, 11),
+            fg_color=_LOG_BG, text_color=_TEXT, dropdown_fg_color=_FRAME_BG,
+            height=28, state="readonly",
+            command=lambda _: self._update_status(),
+        )
+        widget.grid(row=self._row, column=1, columnspan=2, padx=(0, 6), pady=3, sticky="ew")
+        widget.set(match)
+        self._widgets[key] = {"kind": "combo", "widget": widget, "options": options}
+        self._row += 1
+
+    def _add_slider(self, key: str, label: str, attr: str, lo: int, hi: int):
+        self._add_label(label)
+        current = getattr(config, attr)
+        try:
+            cur_int = int(current)
+        except (TypeError, ValueError):
+            cur_int = lo
+        cur_int = max(lo, min(hi, cur_int))
+
+        value_label = ctk.CTkLabel(
+            self._scroll, text=str(cur_int),
+            font=(_FONT, 11), text_color=_TEXT, width=32,
+        )
+        value_label.grid(row=self._row, column=2, padx=(4, 6), pady=3)
+
+        slider = ctk.CTkSlider(
+            self._scroll, from_=lo, to=hi,
+            number_of_steps=hi - lo, height=18,
+            command=lambda v, lbl=value_label: self._on_slider(v, lbl),
+        )
+        slider.grid(row=self._row, column=1, padx=(0, 4), pady=3, sticky="ew")
+        slider.set(cur_int)
+        self._widgets[key] = {"kind": "slider", "widget": slider, "label": value_label}
+        self._row += 1
+
+    def _on_slider(self, value: float, label: ctk.CTkLabel):
+        label.configure(text=str(int(round(value))))
+        self._update_status()
+
+    def _add_switch(self, key: str, label: str, attr: str):
+        self._add_label(label)
+        current = bool(getattr(config, attr))
+        widget = ctk.CTkSwitch(
+            self._scroll, text="", width=40,
+            command=self._update_status,
+        )
+        widget.grid(row=self._row, column=1, columnspan=2, padx=(0, 6), pady=3, sticky="w")
+        if current:
+            widget.select()
+        else:
+            widget.deselect()
+        self._widgets[key] = {"kind": "switch", "widget": widget}
+        self._row += 1
+
+    def _add_entry(self, key: str, label: str, attr: str):
+        self._add_label(label)
+        current = getattr(config, attr)
+        widget = ctk.CTkEntry(
+            self._scroll, font=(_FONT, 11),
+            fg_color=_LOG_BG, text_color=_TEXT, height=28,
+        )
+        widget.grid(row=self._row, column=1, columnspan=2, padx=(0, 6), pady=3, sticky="ew")
+        widget.insert(0, str(current))
+        widget.bind("<KeyRelease>", lambda _: self._update_status())
+        self._widgets[key] = {"kind": "entry", "widget": widget}
+        self._row += 1
+
+    # ─── 값 읽기 ───
+
+    def _read(self, key: str, default=0):
+        meta = self._widgets.get(key)
+        if not meta:
+            return default
+        kind = meta["kind"]
+        widget = meta["widget"]
+        if kind == "slider":
+            return int(round(widget.get()))
+        if kind == "switch":
+            return widget.get() == 1
+        if kind == "combo":
+            display = widget.get()
+            return next((v for v, d in meta["options"] if d == display), default)
+        if kind == "entry":
+            try:
+                return int(widget.get())
+            except ValueError:
+                return default
+        return default
+
+    # ─── 추정값 갱신 ───
+
+    def _update_status(self):
+        """현재 위젯 값 기반으로 Print Time × / Whiteness % 갱신.
+
+        Whiteness: 매뉴얼 스크린샷 단서(Highlight=5 → 400%) 기반 (Highlight - 1) × 100%.
+        Print Time: 잉크 모드/멀티패스/더블프린팅/매수에 대한 근사 multiplier.
+        """
+        ink = self._read("ink", 0)
+        highlight = self._read("highlight", 5)
+        multiple = self._read("multiple", False)
+        double_print = self._read("double_print", 0)
+        copies = max(1, self._read("copies", 1))
+
+        whiteness = max(0, (highlight - 1) * 100) if ink in (1, 2) else 0
+        self._whiteness_label.configure(text=f"Whiteness {whiteness}%")
+
+        if ink == 0:
+            mult = 1.0
+        elif ink == 1:
+            mult = 1.5
+        elif ink == 2:
+            mult = 2.0
+        else:
+            mult = 1.0
+        if ink in (0, 2) and multiple:
+            mult *= 2.0
+        if ink == 0 and double_print > 0:
+            mult *= (1 + double_print)
+        mult *= copies
+        self._print_time_label.configure(text=f"Print Time x{mult:.2f}")
+
+    # ─── 저장 ───
 
     def _save(self):
-        for key in config.GTX4CMD_KEYS:
-            if key not in self._rows:
-                continue
-            kind, widget = self._rows[key]
-            if kind == "entry":
-                value = widget.get().strip()
-            elif kind == "combo":
-                value = widget.get().split(":", 1)[0].strip()
-            else:  # switch
+        for key, meta in self._widgets.items():
+            kind = meta["kind"]
+            widget = meta["widget"]
+            if kind == "combo":
+                display = widget.get()
+                value = str(next((v for v, d in meta["options"] if d == display),
+                                 meta["options"][0][0]))
+            elif kind == "slider":
+                value = str(int(round(widget.get())))
+            elif kind == "switch":
                 value = "true" if widget.get() == 1 else "false"
+            elif kind == "entry":
+                value = widget.get().strip()
+            else:
+                continue
             config.save_value("gtx4cmd", key, value)
 
         config.reload()
-        logger.info("GTX4CMD 파라미터 저장 완료 (재시작 시 적용)")
+        logger.info("Print Settings 저장 완료")
+        _prompt_restart(self._parent)
