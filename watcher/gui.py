@@ -92,6 +92,8 @@ class WatcherApp(ctk.CTk):
         self._build_watcher_tab(self._tab_watcher)
         self._build_agent_tab(self._tab_agent)
 
+        self._tabview.set("Agent")
+
         # GTX4CMD 파라미터 패널 (우측)
         self._param_panel = ParameterPanel(self)
         self._param_panel.grid(row=0, column=1, padx=(4, 8), pady=8, sticky="ns")
@@ -395,7 +397,8 @@ class SettingsDialog(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("설정")
-        self.geometry("500x600")
+        self.geometry("500x720")
+        self.minsize(500, 560)
         self.configure(fg_color=_BG)
         self.transient(parent)
         self.grab_set()
