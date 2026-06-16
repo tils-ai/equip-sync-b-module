@@ -44,9 +44,11 @@ class SettingsPanel(ctk.CTkFrame):
     WIDTH = 520
     WRAP = 440
 
-    def __init__(self, root: ctk.CTk) -> None:
+    def __init__(self, root: ctk.CTk, on_saved=None) -> None:
         super().__init__(root, width=self.WIDTH, corner_radius=0, fg_color=theme.SURFACE)
         self._open = False
+        # 저장 직후 호출되는 콜백 (예: 실행 중 agent 의 출력 워커 재생성으로 즉시 반영)
+        self._on_saved = on_saved
 
         # pack_propagate(False) 가 없으면 프레임이 자식 크기에 맞춰 줄어들어 width=WIDTH 가 무시된다.
         # 높이는 place(relheight=1.0) 가 잡고, 폭만 WIDTH 로 고정.
@@ -171,6 +173,18 @@ class SettingsPanel(ctk.CTkFrame):
         combo.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=2)
         combo.set(current)
         return combo
+
+    def _switch(self, parent, label: str, value: bool, row: int) -> ctk.CTkSwitch:
+        sw = ctk.CTkSwitch(
+            parent, text=label, onvalue=True, offvalue=False,
+            font=ctk.CTkFont(family=_font_family(), size=11),
+        )
+        if value:
+            sw.select()
+        else:
+            sw.deselect()
+        sw.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        return sw
 
     # ── 페어링 ──────────────────────────────
     def _build_pairing(self, parent) -> None:
@@ -505,12 +519,94 @@ class SettingsPanel(ctk.CTkFrame):
         self._copies = self._entry(parent, "매수", str(config.COPIES), 4)
         self._position = self._entry(parent, "위치(8자리)", config.POSITION, 5)
 
-        ctk.CTkLabel(
+        # 고급 설정 — 버튼을 누르면 하단에 모든 가먼트 CLI 파라미터를 펼쳐 세부 조정 (GraphicsLab 식)
+        self._advanced_visible = False
+        self._advanced_btn = ctk.CTkButton(
             parent,
-            text="고급 파라미터는 config.ini 직접 편집",
-            font=ctk.CTkFont(family=_font_family(), size=10),
-            text_color=theme.TEXT_MUTED,
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(6, 0))
+            text="고급 설정 펼치기 ▾",
+            height=theme.TOUCH_MIN - 12,
+            font=ctk.CTkFont(family=_font_family(), size=11),
+            fg_color=theme.NEUTRAL_BTN,
+            hover_color=theme.NEUTRAL_HOVER,
+            text_color=theme.TEXT,
+            command=self._toggle_advanced,
+        )
+        self._advanced_btn.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+
+        self._advanced_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self._advanced_frame.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        self._build_advanced(self._advanced_frame)
+        self._advanced_frame.grid_remove()
+
+    def _toggle_advanced(self) -> None:
+        self._advanced_visible = not self._advanced_visible
+        if self._advanced_visible:
+            self._advanced_frame.grid()
+            self._advanced_btn.configure(text="고급 설정 접기 ▴")
+        else:
+            self._advanced_frame.grid_remove()
+            self._advanced_btn.configure(text="고급 설정 펼치기 ▾")
+
+    def _build_advanced(self, parent) -> None:
+        """모든 가먼트 CLI 파라미터 — 잉크/레이아웃/색상 보정 세부값. config 값으로 프리필."""
+        parent.grid_columnconfigure(1, weight=1)
+        platen_opts = ["0: 16x21", "1: 16x18", "2: 14x16", "3: 10x12", "4: 7x8"]
+
+        def platen_cur(idx: int) -> str:
+            return platen_opts[idx] if 0 <= idx < len(platen_opts) else platen_opts[0]
+
+        r = 0
+
+        def label(text: str) -> None:
+            nonlocal r
+            ctk.CTkLabel(
+                parent, text=text,
+                font=ctk.CTkFont(family=_font_family(), size=11, weight="bold"),
+                text_color=theme.TEXT_MUTED,
+            ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 2))
+            r += 1
+
+        # 레이아웃 / 플래튼
+        label("레이아웃 / 플래튼")
+        self._adv_auto_center = self._switch(parent, "자동 중앙 정렬 (auto_center)", config.AUTO_CENTER, r); r += 1
+        self._adv_auto_fit = self._switch(parent, "플래튼 자동 맞춤 (auto_fit)", config.AUTO_FIT, r); r += 1
+        self._adv_size = self._entry(parent, "크기 (size, 비우면 배율)", config.SIZE, r); r += 1
+        self._adv_magnification = self._entry(parent, "배율 (magnification, 1000=100%)", config.MAGNIFICATION, r); r += 1
+        self._adv_platen_adult = self._combo(parent, "성인 플래튼", platen_opts, platen_cur(config.PLATEN_ADULT), r); r += 1
+        self._adv_platen_child = self._combo(parent, "아동 플래튼", platen_opts, platen_cur(config.PLATEN_CHILD), r); r += 1
+        self._adv_machine_mode = self._entry(parent, "머신 모드 (machine_mode)", str(config.MACHINE_MODE), r); r += 1
+        self._adv_resolution = self._entry(parent, "해상도 (resolution)", str(config.RESOLUTION), r); r += 1
+
+        # 잉크
+        label("잉크")
+        self._adv_ink_volume = self._entry(parent, "잉크량 (ink_volume)", str(config.INK_VOLUME), r); r += 1
+        self._adv_highlight = self._entry(parent, "하이라이트 (highlight)", str(config.HIGHLIGHT), r); r += 1
+        self._adv_mask = self._entry(parent, "마스크 (mask)", str(config.MASK), r); r += 1
+        self._adv_double_print = self._entry(parent, "이중 인쇄 (double_print)", str(config.DOUBLE_PRINT), r); r += 1
+        self._adv_min_white = self._entry(parent, "최소 화이트 (min_white)", str(config.MIN_WHITE), r); r += 1
+        self._adv_choke = self._entry(parent, "초크 (choke)", str(config.CHOKE), r); r += 1
+        self._adv_white_as = self._entry(parent, "화이트 처리 (white_as)", str(config.WHITE_AS), r); r += 1
+        self._adv_eco_mode = self._switch(parent, "친환경 모드 (eco_mode)", config.ECO_MODE, r); r += 1
+        self._adv_material_black = self._switch(parent, "원단 검정 (material_black)", config.MATERIAL_BLACK, r); r += 1
+        self._adv_uni_print = self._switch(parent, "단방향 인쇄 (uni_print)", config.UNI_PRINT, r); r += 1
+        self._adv_multiple = self._switch(parent, "다중 (multiple)", config.MULTIPLE, r); r += 1
+        self._adv_pause = self._switch(parent, "일시정지 (pause)", config.PAUSE, r); r += 1
+
+        # 투명색 처리
+        label("투명색 처리")
+        self._adv_trans_color = self._switch(parent, "투명색 처리 (trans_color)", config.TRANS_COLOR, r); r += 1
+        self._adv_color_trans = self._entry(parent, "투명색 변환 (color_trans)", str(config.COLOR_TRANS), r); r += 1
+        self._adv_tolerance = self._entry(parent, "투명색 임계 (tolerance)", str(config.TOLERANCE), r); r += 1
+
+        # 색상 보정
+        label("색상 보정")
+        self._adv_saturation = self._entry(parent, "채도 (saturation)", str(config.SATURATION), r); r += 1
+        self._adv_brightness = self._entry(parent, "명도 (brightness)", str(config.BRIGHTNESS), r); r += 1
+        self._adv_contrast = self._entry(parent, "대비 (contrast)", str(config.CONTRAST), r); r += 1
+        self._adv_cyan = self._entry(parent, "Cyan 밸런스 (cyan_balance)", str(config.CYAN_BALANCE), r); r += 1
+        self._adv_magenta = self._entry(parent, "Magenta 밸런스 (magenta_balance)", str(config.MAGENTA_BALANCE), r); r += 1
+        self._adv_yellow = self._entry(parent, "Yellow 밸런스 (yellow_balance)", str(config.YELLOW_BALANCE), r); r += 1
+        self._adv_black = self._entry(parent, "Black 밸런스 (black_balance)", str(config.BLACK_BALANCE), r); r += 1
 
     # ── 렌더링 ──────────────────────────────
     def _build_render(self, parent) -> None:
@@ -573,9 +669,48 @@ class SettingsPanel(ctk.CTkFrame):
             config.save_value("garment_cli", "ink", self._ink.get().split(":")[0])
             config.save_value("garment_cli", "copies", self._copies.get())
             config.save_value("garment_cli", "position", self._position.get())
+
+            # 고급 설정 — 모든 가먼트 CLI 파라미터 (펼침 여부와 무관하게 위젯은 항상 존재)
+            def _bool(v: bool) -> str:
+                return "true" if v else "false"
+
+            config.save_value("garment_cli", "auto_center", _bool(self._adv_auto_center.get()))
+            config.save_value("garment_cli", "auto_fit", _bool(self._adv_auto_fit.get()))
+            config.save_value("garment_cli", "size", self._adv_size.get())
+            config.save_value("garment_cli", "magnification", self._adv_magnification.get())
+            config.save_value("garment_cli", "platen_adult", self._adv_platen_adult.get().split(":")[0])
+            config.save_value("garment_cli", "platen_child", self._adv_platen_child.get().split(":")[0])
+            config.save_value("garment_cli", "machine_mode", self._adv_machine_mode.get())
+            config.save_value("garment_cli", "resolution", self._adv_resolution.get())
+            config.save_value("garment_cli", "ink_volume", self._adv_ink_volume.get())
+            config.save_value("garment_cli", "highlight", self._adv_highlight.get())
+            config.save_value("garment_cli", "mask", self._adv_mask.get())
+            config.save_value("garment_cli", "double_print", self._adv_double_print.get())
+            config.save_value("garment_cli", "min_white", self._adv_min_white.get())
+            config.save_value("garment_cli", "choke", self._adv_choke.get())
+            config.save_value("garment_cli", "white_as", self._adv_white_as.get())
+            config.save_value("garment_cli", "eco_mode", _bool(self._adv_eco_mode.get()))
+            config.save_value("garment_cli", "material_black", _bool(self._adv_material_black.get()))
+            config.save_value("garment_cli", "uni_print", _bool(self._adv_uni_print.get()))
+            config.save_value("garment_cli", "multiple", _bool(self._adv_multiple.get()))
+            config.save_value("garment_cli", "pause", _bool(self._adv_pause.get()))
+            config.save_value("garment_cli", "trans_color", _bool(self._adv_trans_color.get()))
+            config.save_value("garment_cli", "color_trans", self._adv_color_trans.get())
+            config.save_value("garment_cli", "tolerance", self._adv_tolerance.get())
+            config.save_value("garment_cli", "saturation", self._adv_saturation.get())
+            config.save_value("garment_cli", "brightness", self._adv_brightness.get())
+            config.save_value("garment_cli", "contrast", self._adv_contrast.get())
+            config.save_value("garment_cli", "cyan_balance", self._adv_cyan.get())
+            config.save_value("garment_cli", "magenta_balance", self._adv_magenta.get())
+            config.save_value("garment_cli", "yellow_balance", self._adv_yellow.get())
+            config.save_value("garment_cli", "black_balance", self._adv_black.get())
+
             config.save_value("render", "dpi", self._render_dpi.get())
             config.reload()
-            # agent/dispatcher 가 config 모듈 변수를 매 작업마다 동적으로 읽으므로 재시작 불필요.
+            # 대부분의 config 는 매 작업마다 동적으로 읽히지만, 출력 워커는 시작 시점에 프린터 이름을
+            # 인자로 고정한다. 저장 콜백으로 실행 중 워커를 재생성해 프린터 변경까지 즉시 반영한다.
+            if self._on_saved:
+                self._on_saved()
             self._save_msg.configure(text="저장됨 — 즉시 적용됨", text_color=theme.SUCCESS)
         except Exception as e:
             self._save_msg.configure(text=f"저장 실패: {e}", text_color=theme.DANGER)
