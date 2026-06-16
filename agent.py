@@ -196,6 +196,8 @@ class AgentWorker:
         # 큐 항목 = (item_id, ink override). ink=None 이면 config.INK 사용.
         self._print_queue: "queue.Queue[tuple[str, Optional[int]]]" = queue.Queue()
         self._print_threads: list[threading.Thread] = []
+        # 출력 워커 세대 토큰 — 증가 시 이전 세대 워커는 자연 종료. 설정 변경 시 워커 재생성에 사용.
+        self._worker_gen = 0
 
     @property
     def running(self) -> bool:
@@ -281,16 +283,35 @@ class AgentWorker:
             return [names[0]]
         return names
 
+    def _spawn_print_workers(self) -> int:
+        """현재 config 기준으로 출력 워커를 (재)생성. 세대 토큰을 올려 이전 세대 워커는 자연 종료시킨다.
+
+        프린터 이름이 워커 시작 시점에 인자로 고정되므로, 설정에서 프린터를 바꾸면 이 메서드로
+        새 프린터 풀에 맞춰 워커를 다시 띄워야 즉시 반영된다.
+        """
+        self._worker_gen += 1
+        gen = self._worker_gen
+        # 프린터별 1개 (프린터 수만큼 동시 전송)
+        self._print_threads = []
+        for printer_name in self._printer_pool():
+            t = threading.Thread(target=self._print_loop, args=(printer_name, gen), daemon=True)
+            t.start()
+            self._print_threads.append(t)
+        return len(self._print_threads)
+
+    def restart_print_workers(self) -> None:
+        """설정 변경(프린터 등)을 즉시 반영 — 폴링 루프는 유지한 채 출력 워커만 재생성."""
+        if not self._running:
+            return
+        n = self._spawn_print_workers()
+        logger.info("출력 워커 재시작(설정 반영) — 워커 %d", n)
+
     def _start_polling(self):
         self._client = GarmentApiClient(config.API_BASE_URL, config.API_KEY)
         self._running = True
 
         # 출력 워커 — 프린터별 1개 (프린터 수만큼 동시 전송)
-        self._print_threads = []
-        for printer_name in self._printer_pool():
-            t = threading.Thread(target=self._print_loop, args=(printer_name,), daemon=True)
-            t.start()
-            self._print_threads.append(t)
+        self._spawn_print_workers()
 
         # 크래시 복구 — ready.json 복원 → 그리드 재구성. auto 모드면 곧바로 출력 큐 투입.
         self._restore_ready_store()
@@ -472,9 +493,12 @@ class AgentWorker:
         self._print_queue.put((item_id, ink))
         return True
 
-    def _print_loop(self, printer_name: Optional[str]):
-        """프린터 1대에 바인딩된 출력 워커 — 큐에서 항목을 받아 1건씩 순차 전송."""
-        while self._running:
+    def _print_loop(self, printer_name: Optional[str], gen: int):
+        """프린터 1대에 바인딩된 출력 워커 — 큐에서 항목을 받아 1건씩 순차 전송.
+
+        gen: 워커 세대. self._worker_gen 과 달라지면(설정 변경으로 워커 재생성됨) 이 워커는 종료한다.
+        """
+        while self._running and gen == self._worker_gen:
             try:
                 item_id, ink = self._print_queue.get(timeout=1)
             except queue.Empty:

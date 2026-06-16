@@ -134,7 +134,7 @@ class WatcherApp(ctk.CTk):
 
         attach_logging(self._log_queue)
 
-        self.settings_panel = SettingsPanel(self)
+        self.settings_panel = SettingsPanel(self, on_saved=self._apply_settings_to_agent)
 
         self.after(200, self._start_services)
         self._tick()
@@ -143,6 +143,14 @@ class WatcherApp(ctk.CTk):
     # ── 외부 인터랙션 ─────────────────────────────────
     def _open_settings(self) -> None:
         self.settings_panel.open()
+
+    def _apply_settings_to_agent(self) -> None:
+        """설정 저장 직후 호출 — 실행 중인 agent의 출력 워커를 새 프린터 설정으로 재생성(재시작 불필요)."""
+        if self._agent and self._agent_running:
+            try:
+                self._agent.restart_print_workers()
+            except Exception:
+                logger.exception("설정 적용(출력 워커 재시작) 실패")
 
     def _on_theme_change(self, label: str) -> None:
         appearance = theme.APPEARANCE_REVERSE.get(label, "system")
