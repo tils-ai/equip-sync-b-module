@@ -191,6 +191,9 @@ if GARMENT_DISPATCH not in ("round_robin", "single"):
 GARMENT_PRINT_MODE = _ini.get("printer", "garment_print_mode", fallback="manual").strip().lower()
 if GARMENT_PRINT_MODE not in ("manual", "auto"):
     GARMENT_PRINT_MODE = "manual"
+# 인쇄 후 자동 작업 삭제 (GTXpro send -D) — False(기본)=삭제 안 함(장비 수신 이력 보존),
+# True=인쇄 후 장비에서 잡 자동 삭제. legacy(GTX-4 CMD)는 -D 미지원이라 항상 미부여.
+GARMENT_AUTO_DELETE = _ini.getboolean("printer", "garment_auto_delete", fallback=False)
 
 # 작업지시서 프린터 (PDF, 일반 프린터)
 WORK_ORDER_PRINTER_NAME = _ini.get("printer", "work_order_name", fallback="").strip()
@@ -455,7 +458,7 @@ def reload():
     """config.ini를 다시 읽어서 모듈 변수를 갱신한다."""
     global PRINTER_NAME, PRINTER_NAMES, PRINTER_MODE, LEGACY_CLI_EXE, PRO_CLI_EXE
     global GARMENT_PRINTER_NAME, GARMENT_PRINTER_NAMES, GARMENT_ENABLED, GARMENT_MODE
-    global GARMENT_DISPATCH, GARMENT_PRINT_MODE
+    global GARMENT_DISPATCH, GARMENT_PRINT_MODE, GARMENT_AUTO_DELETE
     global WORK_ORDER_PRINTER_NAME, WORK_ORDER_ENABLED
     global GTX_CLI, AUTO_CENTER, POSITION, SIZE, MAGNIFICATION, WHITE_AS
     global COPIES, MACHINE_MODE, RESOLUTION, PLATEN_SIZE, INK
@@ -486,6 +489,7 @@ def reload():
     GARMENT_PRINT_MODE = _ini.get("printer", "garment_print_mode", fallback="manual").strip().lower()
     if GARMENT_PRINT_MODE not in ("manual", "auto"):
         GARMENT_PRINT_MODE = "manual"
+    GARMENT_AUTO_DELETE = _ini.getboolean("printer", "garment_auto_delete", fallback=False)
     WORK_ORDER_PRINTER_NAME = _ini.get("printer", "work_order_name", fallback="").strip()
     WORK_ORDER_ENABLED = _ini.getboolean("printer", "work_order_enabled", fallback=False)
     PRINTER_NAMES = GARMENT_PRINTER_NAMES

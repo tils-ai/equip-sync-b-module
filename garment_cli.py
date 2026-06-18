@@ -552,8 +552,19 @@ def send_to_printer(arx4_path: str, printer_name: str = None) -> int:
     args = ["send", "-A", arx4_path, "-P", target]
     # -D(인쇄 후 자동 작업 삭제)는 GTXpro CMD 전용 옵션이다. GTX-4 CMD send 에
     # 넘기면 -3301(option cannot be used with send)로 실패하므로 pro 에서만 부여한다.
+    # 값은 config.GARMENT_AUTO_DELETE 로 조절(기본 0=삭제 안 함, 장비 수신 이력 보존).
     if preferred_data_extension(target) == ".arxp":
-        args += ["-D", "1"]
+        args += ["-D", "1" if config.GARMENT_AUTO_DELETE else "0"]
+        logger.info(
+            "  작업 삭제(GTXpro -D): %s",
+            "삭제(-D 1)" if config.GARMENT_AUTO_DELETE else "보존(-D 0)",
+        )
+    else:
+        # GTX-4(422/legacy)는 CLI에 -D/작업삭제 제어가 없다(가이드 §3-2/§3-4).
+        # 수신 이력 보존 여부는 장비 패널 'Auto Job Delete' 설정이 전적으로 결정한다.
+        logger.info(
+            "  작업 삭제(GTX-4/422): CLI 미지원 — 장비 'Auto Job Delete' 패널 설정을 따름"
+        )
     return _run(args, printer_name=target)
 
 

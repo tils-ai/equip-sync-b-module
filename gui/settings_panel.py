@@ -333,6 +333,23 @@ class SettingsPanel(ctk.CTkFrame):
         current_print_mode = self._print_mode_opts[1] if config.GARMENT_PRINT_MODE == "auto" else self._print_mode_opts[0]
         self._garment_print_mode = self._combo(parent, "전송 방식", self._print_mode_opts, current_print_mode, 8)
 
+        # 인쇄 후 자동 작업 삭제 (GTXpro 전용) — OFF(기본)면 장비에 수신 이력이 남는다.
+        self._garment_auto_delete = self._switch(
+            parent, "인쇄 후 자동 작업 삭제 (GTXpro · 끄면 수신 이력 보존)",
+            config.GARMENT_AUTO_DELETE, 9,
+        )
+        ctk.CTkLabel(
+            parent,
+            text="GTXpro 전용 설정입니다. GTX-4/422 장비는 CLI에 작업 삭제 옵션이 없어 "
+                 "이 스위치가 적용되지 않으며, 수신 이력 보존은 장비 패널의 "
+                 "'Auto Job Delete' 메뉴 설정을 따릅니다.",
+            font=ctk.CTkFont(family=_font_family(), size=10),
+            text_color=theme.TEXT_MUTED,
+            anchor="w",
+            wraplength=self.WRAP,
+            justify="left",
+        ).grid(row=10, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+
         # 초기 로드 (Windows에서만 실제 목록 채워짐)
         self._refresh_garment_printers()
         self._refresh_work_order_printers()
@@ -655,6 +672,10 @@ class SettingsPanel(ctk.CTkFrame):
             # 전송 방식 — 콤보 라벨 → manual/auto
             print_mode_val = "auto" if self._garment_print_mode.get() == self._print_mode_opts[1] else "manual"
             config.save_value("printer", "garment_print_mode", print_mode_val)
+            config.save_value(
+                "printer", "garment_auto_delete",
+                "true" if self._garment_auto_delete.get() else "false",
+            )
             # 하위호환: 기존 name/mode도 가먼트 키와 동기화
             config.save_value("printer", "name", self._garment_name.get())
             config.save_value("printer", "mode", self._printer_mode.get())
