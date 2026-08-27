@@ -11,6 +11,10 @@ import config
 
 logger = logging.getLogger(__name__)
 
+# 흰 배경 합성 시 '사실상 투명'으로 간주할 알파 상한.
+# 이 값 미만만 배경(정확한 흰색)으로 잘라내고, 이상은 실제 알파로 합성해 그라데이션을 보존한다.
+ALPHA_CUTOFF = 8
+
 
 def process_file(
     file_path: str,
@@ -272,17 +276,20 @@ def _calc_fit_position(img_w: int, img_h: int, platen_w: int, platen_h: int) -> 
 
 
 def _flatten_to_white(img: Image.Image) -> Image.Image:
-    """RGBA 알파 이진화(임계 128) 후 배경을 정확한 RGB(255,255,255)로 합성.
+    """RGBA 배경을 정확한 RGB(255,255,255)로 합성 (알파 그라데이션 보존).
 
     가먼트 CLI의 `-W 0`(기본)은 정확한 RGB(255,255,255) 픽셀만 투명으로 해석하므로,
-    안티앨리어싱/렌더 오차로 '거의 흰색'이 된 배경 픽셀이 잉크로 분사되는 것을 막는다.
+    안티앨리어싱/렌더 오차로 '거의 흰색'이 된 배경 픽셀이 잉크로 분사되는 것을 막아야 한다.
+    다만 임계값을 128로 잡아 알파를 이진화하면 도안 본체의 반투명 그라데이션까지
+    "흰색 아니면 100% 원색"으로 뭉개진다(알파 0→255 그라데이션이 2색으로 붕괴).
+    그래서 임계는 '거의 투명한 배경 제거'에만 쓰고(ALPHA_CUTOFF), 나머지 구간은
+    실제 알파값으로 정상 합성한다.
     """
     if img.mode != "RGBA":
         return img.convert("RGB")
-    alpha = img.split()[3]
-    mask = alpha.point(lambda a: 255 if a >= 128 else 0)
+    alpha = img.split()[3].point(lambda a: 0 if a < ALPHA_CUTOFF else a)
     flat = Image.new("RGB", img.size, (255, 255, 255))
-    flat.paste(img.convert("RGB"), mask=mask)
+    flat.paste(img.convert("RGB"), mask=alpha)
     return flat
 
 
