@@ -39,8 +39,12 @@ def process_file(
         if not images:
             raise RuntimeError(f"출력할 이미지가 없습니다: {filename}")
 
+        # 흰 배경 평탄화는 PDF 래스터화 산물을 정리하기 위한 보정이다(_flatten_to_white 참조).
+        # PNG/JPG/ZIP 은 디자이너가 만든 원본 이미지이므로 픽셀을 건드리지 않고 그대로 넘긴다.
+        from_pdf = os.path.splitext(file_path)[1].lower() == ".pdf"
+
         if config.PRINTER_MODE == "cli":
-            _print_via_cli(images, target_printer, needs_plate_change, ink)
+            _print_via_cli(images, target_printer, needs_plate_change, ink, from_pdf)
         else:
             _print_via_direct(images, target_printer)
 
@@ -122,11 +126,18 @@ def _print_via_direct(images: list[Image.Image], printer_name: str):
         print_image(_flatten_to_white(img), printer_name)
 
 
-def _print_via_cli(images: list[Image.Image], printer_name: str, needs_plate_change: bool = False, ink: int | None = None):
+def _print_via_cli(
+    images: list[Image.Image],
+    printer_name: str,
+    needs_plate_change: bool = False,
+    ink: int | None = None,
+    from_pdf: bool = False,
+):
     """가먼트 CLI 경유 출력 (PNG만 지원).
 
     needs_plate_change=True 면 아동 플레이트(10x12), 아니면 성인 플레이트(14x16) 사용.
     ink: 잉크 모드 오버라이드 (0=Color, 2=Color+White). None이면 config.INK.
+    from_pdf=True 일 때만 흰 배경 평탄화를 적용한다(원본 이미지는 무보정 통과).
     AUTO_FIT 모드(기본): 이미지를 플레이트에 contain(축소만, 작으면 원본), 가로 중앙·세로 상단 배치.
     """
     from garment_cli import (
@@ -169,11 +180,11 @@ def _print_via_cli(images: list[Image.Image], printer_name: str, needs_plate_cha
             png_path = os.path.join(tmp_dir, f"page_{i}.png")
             arx4_path = os.path.join(tmp_dir, f"page_{i}{data_ext}")
 
-            flat_img = _flatten_to_white(img)
-            flat_img.save(png_path, "PNG", dpi=(config.RENDER_DPI, config.RENDER_DPI))
+            out_img = _prepare_for_cli(img, from_pdf)
+            out_img.save(png_path, "PNG", dpi=(config.RENDER_DPI, config.RENDER_DPI))
 
             base_w, base_h = _image_dims_mm10(img)
-            non_white_pixels, non_white_bbox = _non_white_stats(flat_img)
+            non_white_pixels, non_white_bbox = _non_white_stats(out_img)
             if config.AUTO_FIT and not manual_size:
                 # GTXpro는 DPI 없는 PNG + -R 조합에서 기본 DPI 해석이 달라질 수 있다.
                 # AUTO_FIT은 0.1mm 절대 크기(-S)로 넘겨 API의 DPI 추정에 의존하지 않는다.
@@ -275,6 +286,21 @@ def _calc_fit_position(img_w: int, img_h: int, platen_w: int, platen_h: int) -> 
     return f"{left:04d}{top:04d}"
 
 
+def _prepare_for_cli(img: Image.Image, from_pdf: bool) -> Image.Image:
+    """가먼트 CLI 에 넘길 PNG 준비.
+
+    - PDF 래스터화 결과: 흰 배경 평탄화 적용 (_flatten_to_white 참조).
+    - PNG/JPG 원본: 디자이너가 의도한 픽셀을 그대로 보존한다. 색/알파를 손대지 않고,
+      CLI 가 확실히 읽는 RGB/RGBA 로만 모드를 맞춘다(팔레트·그레이스케일 PNG 대비).
+      모드 변환은 픽셀값을 바꾸지 않는 무손실 변환이다.
+    """
+    if from_pdf:
+        return _flatten_to_white(img)
+    if img.mode in ("RGB", "RGBA"):
+        return img
+    return img.convert("RGBA" if "A" in img.mode or img.mode == "P" else "RGB")
+
+
 def _flatten_to_white(img: Image.Image) -> Image.Image:
     """RGBA 배경을 정확한 RGB(255,255,255)로 합성 (알파 그라데이션 보존).
 
@@ -294,8 +320,16 @@ def _flatten_to_white(img: Image.Image) -> Image.Image:
 
 
 def _non_white_stats(img: Image.Image) -> tuple[int, tuple[int, int, int, int] | None]:
-    """RGB(255,255,255)가 아닌 픽셀 수와 bounding box."""
-    rgb = img.convert("RGB")
+    """RGB(255,255,255)가 아닌 픽셀 수와 bounding box (진단 로그 전용).
+
+    RGBA 원본은 `convert("RGB")` 로 알파를 버리면 투명 배경의 밑색(보통 검정)까지
+    비-흰색으로 집계되어 수치가 무의미해진다. 측정할 때만 흰 배경에 합성한다.
+    (출력물 자체는 건드리지 않는다 — 이 함수는 로그용 사본만 만든다.)
+    """
+    if img.mode == "RGBA":
+        rgb = Image.alpha_composite(Image.new("RGBA", img.size, (255, 255, 255, 255)), img).convert("RGB")
+    else:
+        rgb = img.convert("RGB")
     white = Image.new("RGB", rgb.size, (255, 255, 255))
     diff = ImageChops.difference(rgb, white)
     bbox = diff.getbbox()
