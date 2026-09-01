@@ -40,18 +40,45 @@ def _get_backoff_interval(empty_count: int, base_interval: float) -> float:
     return base_interval
 
 
-def _download_file(url: str, dest_path: str) -> bool:
-    """URL에서 파일 다운로드 (디자인 파일 · 작업지시서 썸네일 공용)."""
-    try:
-        resp = requests.get(url, timeout=60, stream=True)
-        resp.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return True
-    except Exception as e:
-        logger.error("다운로드 실패 (%s): %s", url, e)
-        return False
+# 다운로드 청크 — 대용량 디자인 PNG 에서 8KB 는 syscall 오버헤드가 커서 1MB 로 읽는다
+_DOWNLOAD_CHUNK = 1024 * 1024
+_DOWNLOAD_RETRIES = 1  # 첫 시도 실패 시 1회 즉시 재시도 (다음 폴링까지 기다리지 않게)
+
+
+def _download_file(url: str, dest_path: str, timeout: int = 60, label: str = "") -> bool:
+    """URL에서 파일 다운로드 (디자인 파일 · 작업지시서 썸네일 공용).
+
+    소요 시간·크기·처리율을 남긴다 — 현장에서 "다운로드가 느리다"를 진단하려면
+    네트워크가 느린 것인지 큐 대기가 긴 것인지 구분할 수 있어야 한다.
+    """
+    name = label or os.path.basename(dest_path)
+    for attempt in range(_DOWNLOAD_RETRIES + 1):
+        started = time.monotonic()
+        size = 0
+        try:
+            resp = requests.get(url, timeout=timeout, stream=True)
+            resp.raise_for_status()
+            with open(dest_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=_DOWNLOAD_CHUNK):
+                    if chunk:
+                        f.write(chunk)
+                        size += len(chunk)
+            elapsed = max(time.monotonic() - started, 0.001)
+            logger.info(
+                "다운로드 완료: %s — %.1fMB, %.1f초 (%.1fMB/s)",
+                name, size / 1048576, elapsed, size / 1048576 / elapsed,
+            )
+            return True
+        except Exception as e:
+            elapsed = time.monotonic() - started
+            if attempt < _DOWNLOAD_RETRIES:
+                logger.warning(
+                    "다운로드 실패 — 즉시 재시도 (%s, %.1f초 경과): %s", name, elapsed, e
+                )
+                continue
+            logger.error("다운로드 실패 (%s, %.1f초 경과): %s", name, elapsed, e)
+            return False
+    return False
 
 
 def _make_filename(job: dict) -> str:
@@ -83,7 +110,7 @@ def _download_thumbnails(job: dict) -> list[str]:
         dest = os.path.join(
             config.DOWNLOAD_DIR, f"{order_number}_{idx:02d}_{seqno}_썸네일{n}{ext}"
         )
-        if _download_file(url, dest):
+        if _download_file(url, dest, timeout=20, label=f"썸네일{n}"):
             paths.append(dest)
         else:
             logger.warning("썸네일 다운로드 실패 — 해당 장은 지시서에서 생략: %s", url)
@@ -382,8 +409,12 @@ class AgentWorker:
 
     # ── 풀링(다운로드) 루프 ──────────────────────────────────────────────
 
+    #: hasMore 무한 신뢰 방지 — 서버가 계속 "남았다"고만 답하는 상황에서도 폴링이 폭주하지 않게
+    _MAX_FAST_POLLS = 30
+
     def _loop(self):
         empty_count = 0
+        fast_polls = 0
         base_interval = max(config.API_POLL_INTERVAL, 5)
         HEARTBEAT_EVERY = 10  # 빈 폴링 N회마다 heartbeat 로그
 
@@ -394,16 +425,26 @@ class AgentWorker:
                     work_order_enabled=bool(config.WORK_ORDER_ENABLED and config.WORK_ORDER_PRINTER_NAME),
                 )
                 jobs = data.get("jobs", [])
+                has_more = bool(data.get("hasMore"))
 
                 server_interval = data.get("pollInterval")
                 if server_interval and server_interval > 0:
                     base_interval = server_interval
 
-                if not jobs:
+                if not jobs and has_more and fast_polls < self._MAX_FAST_POLLS:
+                    # 서버에 처리할 큐는 있는데 이번엔 못 받은 상태(동시성 1 제한 등).
+                    # 이걸 "할 일 없음"으로 세면 백오프가 30초까지 벌어져 다음 건이 그만큼 늦는다.
+                    self._pending_count = 0
+                    empty_count = 0
+                    fast_polls += 1
+                    if fast_polls == 1:
+                        logger.info("풀링 — 대기 큐 있음(hasMore), 백오프 없이 재시도")
+                elif not jobs:
                     self._pending_count = 0
                     if empty_count == 0:
                         logger.info("풀링 중 — 대기 큐 없음")
                     empty_count += 1
+                    fast_polls = 0
                     if empty_count % HEARTBEAT_EVERY == 0:
                         logger.info(
                             "풀링 중 — 대기 큐 없음 (연속 %d회, %d초 간격)",
@@ -413,6 +454,7 @@ class AgentWorker:
                     if empty_count > 0:
                         logger.info("풀링 — 잡 %d건 도착", len(jobs))
                     empty_count = 0
+                    fast_polls = 0
                     self._pending_count = len(jobs)
                     for job in jobs:
                         if not self._running:
