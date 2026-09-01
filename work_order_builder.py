@@ -19,7 +19,7 @@ from __future__ import annotations
 import io
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -40,7 +40,10 @@ class WorkOrderJob:
     work_url: str
     item_index: int = 1
     item_total: int = 1
+    #: 생산 이미지 — 실제로 프린터에 넘긴 도안 파일(이미지일 때만)
     preview_image_path: Optional[str] = None
+    #: 썸네일 — 에디터 미리보기(인쇄 면 수만큼). 작업자가 완성 형태를 대조하는 용도
+    thumbnail_paths: list[str] = field(default_factory=list)
     design_filename: Optional[str] = None
     printer_name: Optional[str] = None
 
@@ -322,21 +325,41 @@ def build_work_order_pdf(job: WorkOrderJob, dest_path: str) -> str:
         page_w / 2, footer_y, f"생성일시: {datetime.now().strftime('%Y. %m. %d. %H:%M:%S')}"
     )
 
-    # 미리보기 + QR (테이블 ~ 푸터 사이를 하단 정렬)
+    # 이미지 타일(생산 이미지 + 썸네일) + QR — 테이블 ~ 푸터 사이를 하단 정렬
     block_bottom = footer_y + footer_size + 9  # 푸터 margin-top 12pt → footer 위 약 9pt 여유
     block_top = table_bottom_y - 9
 
-    has_preview = bool(job.preview_image_path and os.path.exists(job.preview_image_path))
-    preview_size = 135  # 웹 180px
-    qr_size = 112.5     # 웹 150px
+    # 타일 구성: 실제로 출력한 도안(생산 이미지) + 에디터 썸네일(인쇄 면 수만큼)
+    tiles: list[tuple[str, str]] = []
+    if job.preview_image_path and os.path.exists(job.preview_image_path):
+        tiles.append((job.preview_image_path, "생산 이미지"))
+    thumbs = [p for p in (job.thumbnail_paths or []) if p and os.path.exists(p)]
+    for n, path in enumerate(thumbs, 1):
+        tiles.append((path, "썸네일" if len(thumbs) == 1 else f"썸네일 {n}"))
+
+    # 장수가 늘면 A4 폭을 넘지 않도록 한 변을 줄인다 (웹 다운로드와 동일 규칙)
+    qr_size = 112.5      # 웹 150px
     label_gap = 6        # 라벨 위 gap (웹 8px)
     label_h = 9
-    block_gap = 12       # 미리보기 묶음 ↔ QR 묶음 사이 (웹 16px)
+    block_gap = 12       # 타일 묶음 ↔ QR 묶음 사이 (웹 16px)
+    tile_gap = 6         # 타일 사이 (웹 8px)
 
-    if has_preview:
-        total_h = preview_size + label_gap + label_h + block_gap + qr_size + label_gap + label_h
+    if len(tiles) > 2:
+        tile_size = 90    # 웹 120px
+    elif len(tiles) > 1:
+        tile_size = 112.5  # 웹 150px
     else:
-        total_h = qr_size + label_gap + label_h
+        tile_size = 135    # 웹 180px
+    if tiles:
+        row_w = tile_size * len(tiles) + tile_gap * (len(tiles) - 1)
+        if row_w > inner_w:  # 그래도 넘치면 폭에 맞춰 균등 축소
+            tile_size = (inner_w - tile_gap * (len(tiles) - 1)) / len(tiles)
+            row_w = inner_w
+    else:
+        row_w = 0
+
+    tile_block_h = (tile_size + label_gap + label_h) if tiles else 0
+    total_h = tile_block_h + (block_gap if tiles else 0) + qr_size + label_gap + label_h
 
     available_h = block_top - block_bottom
     block_origin = block_bottom + max(0, available_h - total_h)
@@ -345,34 +368,38 @@ def build_work_order_pdf(job: WorkOrderJob, dest_path: str) -> str:
     bg_color = HexColor("#fafafa")
     label_color = HexColor("#666666")
 
-    if has_preview:
-        preview_y = block_origin + total_h - preview_size
-        preview_x = (page_w - preview_size) / 2
-        # 배경
-        c.setFillColor(bg_color)
-        c.rect(preview_x, preview_y, preview_size, preview_size, stroke=0, fill=1)
-        # 이미지 (contain)
-        try:
-            img_reader = ImageReader(job.preview_image_path)
-            iw, ih = img_reader.getSize()
-            scale = min(preview_size / iw, preview_size / ih)
-            draw_w = iw * scale
-            draw_h = ih * scale
-            draw_x = preview_x + (preview_size - draw_w) / 2
-            draw_y = preview_y + (preview_size - draw_h) / 2
-            c.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, mask="auto")
-        except Exception:
-            logger.exception("미리보기 이미지 삽입 실패")
-        # 테두리
-        c.setStrokeColor(border_color)
-        c.setLineWidth(1)
-        c.rect(preview_x, preview_y, preview_size, preview_size, stroke=1, fill=0)
-        # 라벨
-        c.setFillColor(label_color)
-        c.setFont(regular_font, label_h)
-        c.drawCentredString(page_w / 2, preview_y - label_gap - label_h * 0.8, "미리보기")
+    if tiles:
+        tile_y = block_origin + total_h - tile_size
+        tile_x = (page_w - row_w) / 2
+        for path, caption in tiles:
+            # 배경
+            c.setFillColor(bg_color)
+            c.rect(tile_x, tile_y, tile_size, tile_size, stroke=0, fill=1)
+            # 이미지 (contain)
+            try:
+                img_reader = ImageReader(path)
+                iw, ih = img_reader.getSize()
+                scale = min(tile_size / iw, tile_size / ih)
+                draw_w = iw * scale
+                draw_h = ih * scale
+                draw_x = tile_x + (tile_size - draw_w) / 2
+                draw_y = tile_y + (tile_size - draw_h) / 2
+                c.drawImage(img_reader, draw_x, draw_y, width=draw_w, height=draw_h, mask="auto")
+            except Exception:
+                logger.exception("작업지시서 이미지 삽입 실패: %s", path)
+            # 테두리
+            c.setStrokeColor(border_color)
+            c.setLineWidth(1)
+            c.rect(tile_x, tile_y, tile_size, tile_size, stroke=1, fill=0)
+            # 라벨
+            c.setFillColor(label_color)
+            c.setFont(regular_font, label_h)
+            c.drawCentredString(
+                tile_x + tile_size / 2, tile_y - label_gap - label_h * 0.8, caption
+            )
+            tile_x += tile_size + tile_gap
 
-        qr_y = preview_y - label_gap - label_h - block_gap - qr_size
+        qr_y = tile_y - label_gap - label_h - block_gap - qr_size
     else:
         qr_y = block_origin + total_h - qr_size
 
