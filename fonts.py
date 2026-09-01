@@ -1,4 +1,4 @@
-"""Pretendard 폰트 로더 — 패키지된 .otf를 프로세스에 등록 후 family명을 반환.
+"""Pretendard 폰트 로더 — 패키지된 .ttf를 프로세스에 등록 후 family명을 반환.
 
 PyInstaller 동결 빌드: sys._MEIPASS/assets/fonts 에서 로드 (--add-data로 번들).
 개발 모드: 이 파일과 같은 디렉토리의 assets/fonts/ 에서 로드.
@@ -26,12 +26,12 @@ def _resource_dir() -> Path:
 def bundled_font_path(bold: bool = False) -> Path | None:
     """PIL/reportlab 등 family명이 아닌 파일 경로가 필요한 곳에서 사용.
 
-    번들된 Pretendard OTF 경로를 반환. Bold 요청인데 Bold 파일이 없으면 Regular 반환.
+    번들된 Pretendard TTF 경로를 반환. Bold 요청인데 Bold 파일이 없으면 Regular 반환.
     번들 파일 자체가 없으면 None.
     """
     font_dir = _resource_dir()
-    bold_path = font_dir / "Pretendard-Bold.otf"
-    regular_path = font_dir / "Pretendard-Regular.otf"
+    bold_path = font_dir / "Pretendard-Bold.ttf"
+    regular_path = font_dir / "Pretendard-Regular.ttf"
     if bold and bold_path.exists():
         return bold_path
     if regular_path.exists():
@@ -49,8 +49,8 @@ def register() -> str:
         return _cached_family
 
     font_dir = _resource_dir()
-    regular = font_dir / "Pretendard-Regular.otf"
-    bold = font_dir / "Pretendard-Bold.otf"
+    regular = font_dir / "Pretendard-Regular.ttf"
+    bold = font_dir / "Pretendard-Bold.ttf"
 
     if not regular.exists():
         logger.warning("번들 Pretendard 누락 (%s) → '%s'로 폴백", regular, FALLBACK)
