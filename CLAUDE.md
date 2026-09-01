@@ -46,7 +46,7 @@ GTX4CMD 사용법은 `20260318-gtx4-source.md`(분석 결과)와 원본 PDF(`GTX
 equip-sync-g-module/
 ├── .github/workflows/build.yml    # tag push → 자동 빌드 & Release
 ├── .source/                       # ❗대외비 (GTX4CMD.exe 등, git 미추적)
-├── assets/fonts/                  # Pretendard 번들
+├── assets/fonts/                  # Pretendard 번들 (**TTF** — reportlab 이 CFF .otf 를 못 읽어 임베딩 실패함)
 ├── gui/                           # 슬라이드 패널, 헤더, 카드, 로그 박스
 │   ├── app.py
 │   ├── settings_panel.py          # 프린터명 + 목록 OptionMenu + 새로고침
@@ -59,7 +59,7 @@ equip-sync-g-module/
 ├── auth.py                        # Device Auth
 ├── watcher.py                     # 폴더 감시 모드
 ├── processor.py                   # 가먼트 디자인 출력 흐름 (direct / gtx4cmd)
-├── work_order_builder.py          # 작업지시서 PDF 조립 (reportlab + qrcode + 한국어 CIDFont)
+├── work_order_builder.py          # 작업지시서 PDF 조립 (reportlab + qrcode, 폰트: 번들 TTF → 맑은 고딕 → CID)
 ├── gtx4cmd.py                     # GTX4CMD.exe 래퍼
 ├── xml_builder.py                 # GTX4CMD XML 파라미터 빌드
 ├── build.bat                      # PyInstaller + --collect-all reportlab/qrcode 포함
@@ -72,7 +72,7 @@ equip-sync-g-module/
 ```
 [GET /api/printer/garment] → jobs[]
   · garmentPending, workOrderPending (서버 sub status)
-  · workOrder: { tenantName, brandName, printedBy, workUrl } (작업지시서 메타)
+  · workOrder: { tenantName, brandName, printedBy, workUrl, thumbnailUrls } (작업지시서 메타)
 
 [agent._process_job(job)]
   ├─ 디자인 PNG/PDF 다운로드 (양쪽 출력 모두 필요)
