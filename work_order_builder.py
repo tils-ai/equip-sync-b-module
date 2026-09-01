@@ -69,12 +69,27 @@ def _font_path(name: str) -> Optional[str]:
     return None
 
 
+def _system_font_path(name: str) -> Optional[str]:
+    """Windows 시스템 폰트(C:\\Windows\\Fonts) 경로. 없으면 None."""
+    if os.name != "nt":
+        return None
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    p = Path(windir) / "Fonts" / name
+    return str(p) if p.exists() else None
+
+
 def _register_fonts() -> tuple[str, str]:
-    """한글 폰트 등록. 반환: (regular_name, bold_name)."""
+    """한글 폰트 등록. 반환: (regular_name, bold_name).
+
+    임베딩 가능한 TTF 를 최우선으로 쓴다. 비임베딩 CID 폰트로 떨어지면 PDF 안에 폰트가 실리지
+    않아, 출력 PC 의 poppler(pdftocairo) 가 대체 폰트를 못 찾을 때 **글자만 통째로 빠진**
+    인쇄물이 나온다(괘선·이미지는 정상). 그래서 CID 는 최후 수단이며 경고를 남긴다.
+    """
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     from reportlab.pdfbase.ttfonts import TTFont
 
+    # 1) 번들 Pretendard (TTF — reportlab 은 CFF 기반 .otf 를 읽지 못한다)
     regular = _font_path("Pretendard-Regular.ttf")
     bold = _font_path("Pretendard-Bold.ttf")
     if regular and bold:
@@ -83,11 +98,29 @@ def _register_fonts() -> tuple[str, str]:
             pdfmetrics.registerFont(TTFont("Pretendard-Bold", bold))
             return "Pretendard", "Pretendard-Bold"
         except Exception:
-            logger.exception("Pretendard ttf 등록 실패 — CID 폴백")
+            logger.exception("Pretendard ttf 등록 실패 — 시스템 폰트 폴백")
+    else:
+        logger.warning("번들 Pretendard ttf 없음 (assets/fonts) — 시스템 폰트 폴백")
 
+    # 2) Windows 기본 한글 폰트 (맑은 고딕) — 역시 임베딩된다
+    sys_regular = _system_font_path("malgun.ttf")
+    sys_bold = _system_font_path("malgunbd.ttf") or sys_regular
+    if sys_regular and sys_bold:
+        try:
+            pdfmetrics.registerFont(TTFont("MalgunGothic", sys_regular))
+            pdfmetrics.registerFont(TTFont("MalgunGothic-Bold", sys_bold))
+            logger.warning("맑은 고딕으로 작업지시서를 생성한다 (번들 Pretendard 사용 불가)")
+            return "MalgunGothic", "MalgunGothic-Bold"
+        except Exception:
+            logger.exception("맑은 고딕 등록 실패 — CID 폴백")
+
+    # 3) 비임베딩 CID — 출력 PC 환경에 따라 글자가 인쇄되지 않을 수 있다
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJo-Medium"))
         pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
+        logger.error(
+            "임베딩 폰트를 찾지 못해 CID 폰트로 생성한다 — 인쇄 시 글자가 비어 나올 수 있음"
+        )
         return "HYSMyeongJo-Medium", "HYGothic-Medium"
     except Exception:
         logger.exception("CIDFont 등록 실패 — Helvetica 폴백 (한글 미지원)")
