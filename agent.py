@@ -16,6 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -39,8 +40,8 @@ def _get_backoff_interval(empty_count: int, base_interval: float) -> float:
     return base_interval
 
 
-def _download_pdf(url: str, dest_path: str) -> bool:
-    """URL에서 PDF 다운로드."""
+def _download_file(url: str, dest_path: str) -> bool:
+    """URL에서 파일 다운로드 (디자인 파일 · 작업지시서 썸네일 공용)."""
     try:
         resp = requests.get(url, timeout=60, stream=True)
         resp.raise_for_status()
@@ -49,7 +50,7 @@ def _download_pdf(url: str, dest_path: str) -> bool:
                 f.write(chunk)
         return True
     except Exception as e:
-        logger.error("PDF 다운로드 실패: %s", e)
+        logger.error("다운로드 실패 (%s): %s", url, e)
         return False
 
 
@@ -60,6 +61,33 @@ def _make_filename(job: dict) -> str:
     ext = job.get("designFileType", "PDF").lower()
     idx = int(job.get("itemIndex", 1))
     return f"{order_number}_{idx:02d}_{seqno}_디자인.{ext}"
+
+
+def _download_thumbnails(job: dict) -> list[str]:
+    """작업지시서에 실을 썸네일(에디터 미리보기) 내려받기.
+
+    인쇄 면 수만큼 내려온다. 지시서 부가 정보라 실패해도 출력은 계속한다 — 받은 것만 싣는다.
+    """
+    urls = [u for u in ((job.get("workOrder") or {}).get("thumbnailUrls") or []) if u]
+    if not urls:
+        return []
+
+    order_number = job.get("orderNumber", "unknown")
+    seqno = job.get("wepnpSeqno", "")
+    idx = int(job.get("itemIndex", 1))
+    paths: list[str] = []
+    for n, url in enumerate(urls, 1):
+        ext = os.path.splitext(urlparse(url).path)[1].lower()
+        if ext not in (".png", ".jpg", ".jpeg"):
+            ext = ".png"
+        dest = os.path.join(
+            config.DOWNLOAD_DIR, f"{order_number}_{idx:02d}_{seqno}_썸네일{n}{ext}"
+        )
+        if _download_file(url, dest):
+            paths.append(dest)
+        else:
+            logger.warning("썸네일 다운로드 실패 — 해당 장은 지시서에서 생략: %s", url)
+    return paths
 
 
 def _is_image(path: str) -> bool:
@@ -440,7 +468,7 @@ class AgentWorker:
 
         # 디자인 파일 다운로드 — 그리드 썸네일/출력에 필요
         logger.info("다운로드: %s", filename)
-        if not _download_pdf(url, download_path):
+        if not _download_file(url, download_path):
             if do_work_order:
                 self._report_failed(job_id, "workOrder", "디자인 파일 다운로드 실패")
             if do_garment:
@@ -449,6 +477,10 @@ class AgentWorker:
             return
 
         _fire(self.on_downloaded, filename)
+
+        # 작업지시서용 썸네일 — job 에 심어두면 ready.json 으로 함께 영속화된다
+        if do_work_order:
+            job["thumbnailPaths"] = _download_thumbnails(job)
 
         # READY 적재 + 서버에 다운로드 완료 보고 (DOWNLOADING → READY)
         item = ReadyItem(
@@ -554,6 +586,9 @@ class AgentWorker:
                         item_index=idx,
                         item_total=int(job.get("itemTotal", 1)),
                         preview_image_path=download_path if _is_image(download_path) else None,
+                        thumbnail_paths=[
+                            p for p in (job.get("thumbnailPaths") or []) if os.path.exists(p)
+                        ],
                         design_filename=filename,
                         printer_name=printer_name,
                     ),
